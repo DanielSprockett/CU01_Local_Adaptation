@@ -10,3 +10,6 @@ Daniel D. Sprockett<sup>1</sup>, Jeffrey D. Price<sup>2</sup>, Anthony F. Jurits
 
 **Abstract:** Mammalian species harbor compositionally distinct gut microbial communities, but the mechanisms that maintain specificity of symbionts to host species remain unclear. Here we show that natural selection within house mice (*Mus musculus domesticus*) drives deterministic assembly of the house-mouse gut microbiota from mixtures of native and non-native microbiotas. Competing microbiotas from wild-derived lines of house mice and other mouse species (*Mus* and *Peromyscus* spp.) within germ-free wildtype (WT) and *Rag1*-knockout (*Rag1<sup>-/-</sup>*) house mice revealed widespread fitness advantages for native gut bacteria. Certain native Bacteriodetes and Firmicutes favored by selection in WT hosts were not favored or disfavored in *Rag1<sup>-/-</sup>* hosts, which lack adaptive immunity, indicating that *Rag1* mediates fitness advantages of these strains. This study demonstrates local adaptation of gut microbiota to a mammalian species.
 
+---
+**NOTE:**
+The R markdown file `CU01_Figures.Rmd` contains all of the R code necessary to re-create the main and supplemental figures for this manuscript. The `Data` directory contains all of the necessary data files. Figure 3 was rendered in [iToL v6](https://itol.embl.de/).
