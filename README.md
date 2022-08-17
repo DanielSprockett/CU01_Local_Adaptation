@@ -12,4 +12,4 @@ Daniel D. Sprockett<sup>1</sup>, Jeffrey D. Price<sup>2</sup>, Anthony F. Jurits
 
 ---
 **NOTE:**
-The R markdown file `CU01_Figures.Rmd` contains all of the R code necessary to re-create the main and supplemental figures for this manuscript. The `Data` directory contains all of the necessary data files. Figure 3 was rendered in [iToL v6](https://itol.embl.de/).
+The R markdown file `CU01_Figures.Rmd` contains all of the R code necessary to recreate the main and supplemental figures for this manuscript. The `Data` directory contains all of the necessary data files. Figure 3 was rendered in [iToL v6](https://itol.embl.de/).
