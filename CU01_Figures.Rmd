@@ -1,0 +1,4090 @@
+---
+title: "`r substr(knitr::current_input(), 1, nchar(knitr::current_input())-4)`"
+author: "Daniel Sprockett"
+date: "08/16/2022"
+output: 
+  html_document: 
+    code_folding: hide
+    theme: lumen
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+last updated: `r format(Sys.Date(), format="%B %d %Y")`
+
+***
+
+<p style="text-align:center;font-size:300%;"> Host Selection of the Gut Microbiota </p>
+
+***
+### Project Title:
+
+#### Local adaptation of host-species specific gut microbiota
+
+### Authors
+
+Daniel D. Sprockett^1^, Jeffrey D. Price^2^, Anthony F. Juritsch^2^, Robert J. Schmaltz^2^, Madalena V. F. Real^1^, Samantha Goldman^1^, Michael Sheehan^3^, Amanda E. Ramer-Tait^2^, Andrew H. Moeller^1*^
+
+1. Department of Ecology and Evolutionary Biology, Cornell University; Ithaca, New York, USA.
+2. Department of Food Science and Technology and the Nebraska Food for Health Center, University of Nebraska-Lincoln; Lincoln, NE, USA.
+3. Laboratory for Animal Social Evolution and Recognition, Department of Neurobiology and Behavior, Cornell University; Ithaca, New York, USA.
+
+\* Corresponding author. Email: andrew.moeller@cornell.edu
+
+
+Abstract: Mammalian species harbor compositionally distinct gut microbial communities, but the mechanisms that maintain specificity of symbionts to host species remain unclear. Here we show that natural selection within house mice (*Mus musculus domesticus*) drives deterministic assembly of the house-mouse gut microbiota from mixtures of native and non-native microbiotas. Competing microbiotas from wild-derived lines of house mice and other mouse species (*Mus* and *Peromyscus* spp.) within germ-free wildtype (WT) and Rag1-knockout (*Rag1^-/-^*) house mice revealed widespread fitness advantages for native gut bacteria. Certain native Bacteriodetes and Firmicutes favored by selection in WT hosts were not favored or disfavored in *Rag1^-/-^* hosts, which lack adaptive immunity, indicating that *Rag1* mediates fitness advantages of these strains. This study demonstrates local adaptation of gut microbiota to a mammalian species.
+
+# Analysis Code
+
+The following R code re-creates all of the main and supplemental figures. 
+
+Set Paths and Establish Directory Structure
+
+```{r setup env, message=FALSE, warning=FALSE}
+
+# Remove the variables in the working environment
+rm(list = ls())
+
+# set to appropriate location
+setwd("/Users/danielsprockett/Documents/Moeller_Lab/Projects/CU01_Host_Selection/Source_Data/")
+
+# set paths
+if (interactive()) {
+  try(file_name <- tail(strsplit(rstudioapi::getSourceEditorContext()$path, "/")[[1]], 1))
+} else {
+  file_name <- knitr::current_input()
+}
+file_name <- substr(file_name, 1, nchar(file_name) - 4)
+
+# all figures will be output to a sub-folder with this file name appended with "_Figures"
+Save_fp <- paste0(getwd(), "/", file_name, "_Outputs/")
+dir.create(file.path(Save_fp), showWarnings = FALSE)
+
+```
+
+Install and Load R packages
+
+```{r load packages, message=FALSE, warning=FALSE}
+
+# set seed
+set.seed(8675309)
+
+# list pacakges
+packages <- c("ggplot2", 
+              "patchwork",
+              "ape", 
+              "caret", 
+              "plyr", 
+              "scales", 
+              "ggdendro", 
+              "grid", 
+              "reshape2", 
+              "gridExtra", 
+              "cowplot", 
+              "vegan",
+              "dplyr",
+              "ggrepel",
+              "magrittr",
+              "RColorBrewer",
+              "xml2",
+              "doParallel",
+              "foreach",
+              "vegan",
+              "Biostrings",
+              "devtools",
+              "phyloseq",
+              "microbiome",
+              "DESeq2",
+              "kableExtra",
+              "UpSetR",
+              "picante",
+              "ggpubr",
+              "treeDA",
+              "igraph",
+              "rstatix")
+
+# install packages from bioconductor
+BiocManager::install(setdiff(packages,installed.packages()), update = FALSE)
+
+# list packages from github
+git_packages <- c("danielsprockett/tyRa",
+                  "danielsprockett/reltools",
+                  "gavinsimpson/ggvegan"
+                  )
+
+# install packages from github
+library(devtools)
+git_package_names <- as.character(sapply(git_packages,function(x){strsplit(x,"/")[[1]][[2]]}))
+install_github(git_packages[which(git_package_names == setdiff(git_package_names,installed.packages()))])
+
+# load packages
+all_packages <- c(packages, git_package_names)
+
+n <- length(all_packages) - sum(sapply(all_packages,require,character.only = TRUE))
+
+# print if packages loaded properly
+if (n == 0) {
+  print("All necessary R packages loaded properly")
+} else {
+  print(paste0(n, " R packages did not load properly"))
+}
+
+```
+
+Set up the graphics device and graphing theme
+
+```{r graphics, message=FALSE, warning=FALSE}
+
+# set the current graphic device off
+if (dev.cur() > 1) {
+  invisible(dev.off())
+}
+
+# set the plotting theme 
+theme_set(theme_bw())
+
+# showtext for fonts
+require(showtext)
+showtext_auto()
+
+```
+
+```{r set palettes}
+
+# select color palettes that are colorblind safe
+library(viridis)
+
+Strain_IDs <- c("Mmus_B6Con", "Mmus_LEW", "Mmus_NY2", "Mmus_NY4", "Mmus_FL1", "Mspic_ZBN", "Mspic_SPITUA", "Mpah", "Pman") 
+Species_IDs <- c("Mmus", "Mspic", "Mpah", "Pman") 
+
+# color  / fill palettes
+Strain_color_pal <- turbo(length(Strain_IDs), alpha = 1, begin = 0, end = 1, direction = 1)
+names(Strain_color_pal) <- Strain_IDs
+Strain_color_pal["Mmus_FL1"] <- "#bad267"
+Strain_color_pal["Mmus_NY4"] <- "#77c697"
+
+Species_color_pal <- Strain_color_pal[c("Mmus_NY2", "Mspic_ZBN", "Mpah", "Pman")]
+names(Species_color_pal) <- Species_IDs
+
+# shape palettes 
+Strain_shape_pal <- c(21, 21, 21, 21, 21,  24, 25, 22, 23)
+names(Strain_shape_pal) <- Strain_IDs
+
+Species_shape_pal <- c(21, 24, 22, 23)
+names(Species_shape_pal) <- Species_IDs
+
+Sample_Type_shape_pal <- c(21, 24, 22)
+names(Sample_Type_shape_pal) <- c("Donor", "Inoculum", "Feces_Output")
+
+Sample_Type_size_pal <- c(4, 3, 2)
+names(Sample_Type_size_pal) <- c("Donor", "Inoculum", "Feces_Output")
+
+Comparison_color_pal <- c("#20639B", "#3CAEA3",  "#F6D55C", "#ffb703", "#ED553B")
+names(Comparison_color_pal) <- c("Within_Strain", "Within_Species", "Between_Species", "Within_Genus", "Between_Genera")
+
+Genotype_color_pal <- c("#DE7A22", "#6AB187")
+names(Genotype_color_pal) <- c("WT", "Rag1")
+
+Native_color_pal <- c("#37a987", "#4b3d8f", "#37a987", "#4b3d8f")
+names(Native_color_pal) <- c("Native", "Non-Native", "Donor_1", "Donor_2")
+
+```
+
+```{r set functions}
+
+## Function to extract legend
+get_legend <- function(a.gplot){ 
+    tmp <- ggplot_gtable(ggplot_build(a.gplot)) 
+    leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box") 
+    legend <- tmp$grobs[[leg]] 
+    legend
+} 
+
+```
+
+```{r import data}
+
+data_fp <- "Data/"
+# import microbiome dataset
+CU01_ps <- readRDS(file.path(data_fp, "CU01_ps.rds"))
+CU01_ps # 6903 taxa and 370 samples
+
+# import matrix of divergence times between hosts from http://www.timetree.org/
+pd <- read.table(file.path(data_fp, "CU01_Host_Distance.txt"), header = TRUE, sep = "\t", row.names = 1)
+dim(pd) # [1] 9 9
+
+# import qPCR data
+qPCR_df <- read.table(file.path(data_fp, "CU01_qPCR.txt"), header = TRUE, sep = "\t")
+dim(qPCR_df) # [1] 176  31
+
+# identified techincal replicates that vary by more than .5 qPCR cycles
+qPCR_df <- qPCR_df[is.na(qPCR_df$Omit_Technical_Variation), ]
+
+# remove outlier/ failed DNA extractiom
+qPCR_df <- qPCR_df[qPCR_df$Copies_16S_per_mg_Feces > 1000, ]
+dim(qPCR_df) # [1] 146  31
+
+# import SourceTracker Data
+SourceTracker_df <- read.table(file.path(data_fp, "CU01_SourceTracker.txt"), header = TRUE, sep = "\t")
+dim(SourceTracker_df) # [1] 278  23
+
+```
+
+# Fig. S1A – PCoA of all lines/donors
+
+```{r Fig S1A}
+
+# Principal Coordinate Analysis 
+
+ps <- CU01_ps
+
+# subset to only donor samples
+ps <- subset_samples(ps, Sample_Type %in% c("Donor"))
+
+# range(sample_sums(ps)) # [1]  7672 39374
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309) 
+
+# ordinate
+ps_ord <- phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE)
+ord_PCoA <- ordinate(ps, "PCoA", distance = ps_ord)
+plot_scree(ord_PCoA)
+PC1 <- round(ord_PCoA$values$Relative_eig[1]*100, 1)
+PC2 <- round(ord_PCoA$values$Relative_eig[2]*100, 1)
+PC3 <- round(ord_PCoA$values$Relative_eig[3]*100, 1)
+pcVar <- PC1 + PC2 + PC3
+print(paste0("Top 3 dimentions explain ", pcVar, "% of the variance."))
+
+df <- cbind(ord_PCoA$vectors, sample_data(ps))
+
+df$Strain_1 <- factor(df$Strain_1 , levels = names(Strain_color_pal))
+
+# Plot PC1 vs PC2
+p <- ggplot(df, aes(x = Axis.2, y = Axis.1))
+p <- p + geom_point(aes(fill = Strain_1), shape = 21, color = "black", alpha = 0.9, size = 3,show.legend = FALSE)
+p <- p + scale_fill_manual(name = "Strain", values = Strain_color_pal, 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2",
+             "NY4",
+             "FL1",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "PMAN"
+             ))
+p <- p + ylab(paste0("PC1 (", PC1, "%)"))
+p <- p + xlab(paste0("PC2 (", PC2, "%)"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_S1A_PC1_vs_PC2"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2, height = 2)
+p
+invisible(dev.off())
+
+
+
+# Plot PC2 vs PC3
+p <- ggplot(df, aes(x = Axis.3, y = Axis.2))
+p <- p + geom_point(aes(fill = Strain_1), shape = 21, color = "black", alpha = 0.9, size = 3, show.legend = FALSE)
+p <- p + scale_fill_manual(name = "Strain", values = Strain_color_pal, 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2",
+             "NY4",
+             "FL1",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "PMAN"
+             ))
+p <- p + xlab(paste0("PC3 (", PC3, "%)"))
+p <- p + ylab(paste0("PC2 (", PC2, "%)"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- "Figure_S1A_PC2_vs_PC3"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2, height = 2)
+p
+invisible(dev.off())
+
+
+```
+
+# Fig. S1B – PCoA of all lines/donors except Pman
+
+```{r Fig S1B}
+
+# Principal Coordinate Analysis 
+
+ps <- CU01_ps
+
+# subset to only donor samples
+ps <- subset_samples(ps, Sample_Type %in% c("Donor"))
+
+# subset to remove Pman
+ps <- subset_samples(ps, Strain_1 != "Pman")
+
+# range(sample_sums(ps)) # [1]  7672 39374
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309) 
+
+# ordinate
+ps_ord <- phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE)
+ord_PCoA <- ordinate(ps, "PCoA", distance = ps_ord)
+plot_scree(ord_PCoA)
+PC1 <- round(ord_PCoA$values$Relative_eig[1]*100, 1)
+PC2 <- round(ord_PCoA$values$Relative_eig[2]*100, 1)
+PC3 <- round(ord_PCoA$values$Relative_eig[3]*100, 1)
+pcVar <- PC1 + PC2 + PC3
+print(paste0("Top 3 dimentions explain ", pcVar, "% of the variance."))
+
+df <- cbind(ord_PCoA$vectors, sample_data(ps))
+
+df$Strain_1 <- factor(df$Strain_1 , levels = names(Strain_color_pal))
+
+# Plot PC1 vs PC2
+p <- ggplot(df, aes(x = Axis.2, y = Axis.1))
+p <- p + geom_point(aes(fill = Strain_1), shape = 21, color = "black", alpha = 0.9, size = 3,show.legend = FALSE)
+p <- p + scale_fill_manual(name = "Strain", values = Strain_color_pal, 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2",
+             "NY4",
+             "FL1",
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + ylab(paste0("PC1 (", PC1, "%)"))
+p <- p + xlab(paste0("PC2 (", PC2, "%)"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_S1B_PC1_vs_PC2"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2, height = 2)
+p
+invisible(dev.off())
+
+# Plot PC2 vs PC3
+p <- ggplot(df, aes(x = Axis.3, y = Axis.2))
+p <- p + geom_point(aes(fill = Strain_1), shape = 21, color = "black", alpha = 0.9, size = 3, show.legend = FALSE)
+p <- p + scale_fill_manual(name = "Strain", values = Strain_color_pal, 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2",
+             "NY4",
+             "FL1",
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + xlab(paste0("PC3 (", PC3, "%)"))
+p <- p + ylab(paste0("PC2 (", PC2, "%)"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- "Figure_S1B_PC2_vs_PC3"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2, height = 2)
+p
+invisible(dev.off())
+
+
+```
+
+# Fig 1B – all donors, exponential decay w/inset
+
+```{r Fig 1B}
+
+# plot microbiome similarity vs Host  Divergence
+
+ps <- CU01_ps
+
+# subset to the donor samples
+ps <- subset_samples(ps, Sample_Type %in%  c("Donor"))
+
+# remove empty ASVs
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+
+# range(sample_sums(ps)) # [1]  7672 39374
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309) 
+
+ps@sam_data$Genus_1 <- "Mus"
+ps@sam_data$Genus_1[which(ps@sam_data$Species_1 == "Pman")] <- "Peromyscus"
+
+
+jaccard_mat <- as.matrix(phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE))
+
+dist_df <- make_distance_df(ps, variables = c("Strain_1", "Species_1", "Genus_1", "Sequencing_Run"), distances = c("jaccard"))
+dist_df$Overlap <- 1 - dist_df$jaccard
+dist_df$Host_Divergence <- NA
+
+for (i in seq_along(dist_df$s1_Strain_1)) { 
+  i_Strain_1 <- dist_df[i, "s1_Strain_1"]
+  i_Strain_2 <- dist_df[i, "s2_Strain_1"]
+  dist_df[i, "Host_Divergence"] <- pd[rownames(pd) == i_Strain_1 , colnames(pd) == i_Strain_2]
+  }
+     
+
+# Same Strain, Same Species, Same Genus
+df <- dist_df
+df <- df[df$same_Strain_1 == "yes",]
+df <- df[df$same_Species_1 == "yes",]
+df <- df[df$same_Genus_1 == "yes",]
+df$Group <- "Within_Strain"
+Within_Strain_df <- df
+
+df <- dist_df
+df <- df[df$same_Strain_1 == "no",]
+df <- df[df$same_Species_1 == "yes",]
+df <- df[df$same_Genus_1 == "yes",]
+df$Group <- "Within_Species"
+Within_Species_df <- df
+
+df <- dist_df
+df <- df[df$same_Strain_1 == "no",]
+df <- df[df$same_Species_1 == "no",]
+df <- df[df$same_Genus_1 == "yes",]
+df$Group <- "Within_Genus"
+Within_Genus_df <- df
+
+df <- dist_df
+df <- df[df$same_Strain_1 == "no",]
+df <- df[df$same_Species_1 == "no",]
+df <- df[df$same_Genus_1 == "no",]
+df$Group <- "Between_Genera"
+Between_Genus_df <- df
+
+
+cdf <- rbind(Within_Strain_df, Within_Species_df, Within_Genus_df, Between_Genus_df)
+cdf$Group <- factor(cdf$Group, levels = c("Within_Strain","Within_Species", "Within_Genus", "Between_Genera"))
+table(cdf$Group)
+# Within_Strain Within_Species   Within_Genus Between_Genera 
+#            30             56            151             88 
+
+# calculate and add p-values
+stat_df <- cdf %>%
+  wilcox_test(Overlap ~ Group, p.adjust.method = "fdr") %>%
+  add_significance("p") %>%
+  add_xy_position(x = "Group")
+# adjust y.position
+stat_df[6, "y.position"] <- stat_df[5, "y.position"]
+stat_df[5, "y.position"] <- stat_df[4, "y.position"]
+stat_df
+
+p <- ggplot(cdf, aes(x = Group, y = Overlap))
+p <- p + geom_boxplot(fill = "darkgray",  outlier.shape = NA, show.legend = FALSE, width = 0.4)
+p <- p + geom_point(fill = "darkgray",  shape = 21, size = 1,  position = position_jitter(width = 0.1), alpha = 0.5, show.legend = FALSE)
+p <- p + scale_fill_manual(name = "Comparison", values = Comparison_color_pal[c(1,2,4,5)], 
+  labels = c("Within Strain", "Within Species", "Within Genus", "Between Genus"))
+p <- p + scale_x_discrete(labels = c("Within\nstrain", "Within\nspecies", "Within\ngenus", "Between\ngenera"))
+p <- p + ylab("Microbiome similarity")
+p <- p + xlab("")
+p <- p + theme(axis.title.y = element_text(size = 8))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif", hide.ns = TRUE, color = "black")
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + ylim(0, 1.1)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_1B_inset"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 2)
+p
+invisible(dev.off())
+
+# plot similarity vs divergence time
+df <- dist_df
+df$Comparison <- NA
+df$Comparison[df$same_Strain_1 == "yes" & df$same_Species_1 == "yes" & df$same_Genus_1 == "yes"] <- "Within_Strain"
+df$Comparison[df$same_Strain_1 == "no" & df$same_Species_1 == "yes" & df$same_Genus_1 == "yes"] <- "Within_Species"
+df$Comparison[df$same_Strain_1 == "no" & df$same_Species_1 == "no" & df$same_Genus_1 == "yes"] <- "Within_Genus"
+df$Comparison[df$same_Strain_1 == "no" & df$same_Species_1 == "no" & df$same_Genus_1 == "no"] <- "Between_Genera"
+df$Comparison <- factor(df$Comparison, levels = c("Within_Strain", "Within_Species", "Within_Genus", "Between_Genera" ))
+table(df$Comparison)
+
+df$Host_Divergence_MYA <- ((df$Host_Divergence + 100)/10^6)
+
+# fit exponential decay using non-linear least squares
+# use Self-Starting Nls Asymptotic Regression Model
+fit <- nls(Overlap ~ SSasymp(Host_Divergence_MYA, Asym, R0, lrc), data = df)
+summary(fit)
+
+# Residual sum of squares
+RSS <- sum(residuals(fit)^2) 
+# Total sum of squares
+TSS <- sum((df$Overlap - mean(df$Overlap))^2)
+# R-squared 
+R_sq <- 1 - (RSS/TSS)  
+print(paste("The R-squared values is ", round(R_sq, 2)))
+# [1] "The R-squared values is  0.55"
+
+# plot
+p <- ggplot(df, aes(x = Host_Divergence_MYA, y = Overlap))
+p <- p + geom_point(fill = "darkgray", alpha = 0.7, size = 2, shape = 21,  position = position_jitter(width = .25), show.legend = FALSE)
+p <- p + guides(fill = guide_legend(override.aes = list(size = 2)))
+p <- p + geom_smooth(color = "black", linetype = "dashed", method = 'nls', formula = y~SSasymp(x, Asym, R0, lrc), se = FALSE)
+p <- p + ylab("Microbiome Similarity")
+p <- p + xlab("Evolutionary Divergence (Ma)")
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_1B_main"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 5, height = 3)
+p
+invisible(dev.off())
+
+```
+
+# Fig. S2 – exp decay w/inset with just Mus donors
+
+```{r FigS2}
+
+# plot microbiome similarity vs Host  Divergence
+
+ps <- CU01_ps
+
+# subset to the donor samples
+ps <- subset_samples(ps, Sample_Type %in%  c("Donor"))
+
+# remove samples from Peromyscus
+ps <- subset_samples(ps, Strain_1 != "Pman")
+
+
+# remove empty ASVs
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+
+# range(sample_sums(ps)) # [1]  7672 39374
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309) 
+
+ps@sam_data$Genus_1 <- "Mus"
+
+
+jaccard_mat <- as.matrix(phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE))
+
+dist_df <- make_distance_df(ps, variables = c("Strain_1", "Species_1", "Genus_1", "Sequencing_Run"), distances = c("jaccard"))
+dist_df$Overlap <- 1 - dist_df$jaccard
+dist_df$Host_Divergence <- NA
+
+for (i in seq_along(dist_df$s1_Strain_1)) { 
+  i_Strain_1 <- dist_df[i, "s1_Strain_1"]
+  i_Strain_2 <- dist_df[i, "s2_Strain_1"]
+  dist_df[i, "Host_Divergence"] <- pd[rownames(pd) == i_Strain_1 , colnames(pd) == i_Strain_2]
+  }
+     
+
+
+# plot similarity vs divergence time
+df <- dist_df
+df$Comparison <- NA
+df$Comparison[df$same_Strain_1 == "yes" & df$same_Species_1 == "yes" & df$same_Genus_1 == "yes"] <- "Within_Strain"
+df$Comparison[df$same_Strain_1 == "no" & df$same_Species_1 == "yes" & df$same_Genus_1 == "yes"] <- "Within_Species"
+df$Comparison[df$same_Strain_1 == "no" & df$same_Species_1 == "no" & df$same_Genus_1 == "yes"] <- "Within_Genus"
+df$Comparison <- factor(df$Comparison, levels = c("Within_Strain", "Within_Species", "Within_Genus"))
+table(df$Comparison)
+ # Within_Strain Within_Species   Within_Genus 
+ #            24             56            151 
+
+df$Host_Divergence_MYA <- ((df$Host_Divergence + 100)/10^6)
+
+# fit exponential decay using non-linear least squares
+# use Self-Starting Nls Asymptotic Regression Model
+fit <- nls(Overlap ~ SSasymp(Host_Divergence_MYA, Asym, R0, lrc), data = df)
+summary(fit)
+
+# Residual sum of squares
+RSS <- sum(residuals(fit)^2) 
+# Total sum of squares
+TSS <- sum((df$Overlap - mean(df$Overlap))^2)
+# R-squared 
+R_sq <- 1 - (RSS/TSS)  
+print(paste("The R-squared values is ", round(R_sq, 3)))
+# [1] "The R-squared values is  0.18"
+
+# plot
+p <- ggplot(df, aes(x = Host_Divergence_MYA, y = Overlap))
+p <- p + geom_point(fill = "darkgray", alpha = 0.7, size = 2, shape = 21,  position = position_jitter(width = .25), show.legend = FALSE)
+p <- p + guides(fill = guide_legend(override.aes = list(size = 2)))
+p <- p + geom_smooth(color = "black", linetype = "dashed", method = 'nls', formula = y~SSasymp(x, Asym, R0, lrc), se = FALSE)
+p <- p + scale_fill_manual(name = "Comparison", values = Comparison_color_pal[c(1,2,4)], 
+  labels = c("Within Strain", "Within Species",  "Within Genus"))
+p <- p + ylab("Microbiome similarity")
+p <- p + xlab("Evolutionary divergence (Ma)")
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_S2"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 5, height = 3)
+p
+invisible(dev.off())
+
+
+```
+
+# Fig. 1D – Exp 1 - PCoA of donor and recipients 9 facets same axes
+
+```{r Fig 1D}
+
+# Principal Coordinate Analysis 
+
+ps <- CU01_ps
+
+# subset to first experiment
+ps <- subset_samples(ps, Sequencing_Run %in% c("Seq_Run_1"))
+ps <- subset_samples(ps, Strain_1 != "Pman")
+
+# subset to only donor samples
+ps <- subset_samples(ps, Sample_Type %in% c("Donor", "Feces_Output"))
+table(ps@sam_data$Sample_Type)
+
+comparisons_to_keep <- c("Mmus_vs_Mspic", "Mmus_vs_Mpah", "Mmus", "Mspic", "Mpah")
+ps <- subset_samples(ps, Species_Comparison %in%  comparisons_to_keep)
+
+# range(sample_sums(ps)) # [1]  2359 57498
+# remove samples with less than 10,000 reads
+ps <- prune_samples(sample_sums(ps) > 10000, ps)
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309) 
+
+# ordinate
+ps_ord <- phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE)
+ord_PCoA <- ordinate(ps, "PCoA", distance = ps_ord)
+# plot_scree(ord_PCoA)
+PC1 <- round(ord_PCoA$values$Relative_eig[1]*100, 1)
+PC2 <- round(ord_PCoA$values$Relative_eig[2]*100, 1)
+PC3 <- round(ord_PCoA$values$Relative_eig[3]*100, 1)
+pcVar <- PC1 + PC2 + PC3
+print(paste0("Top 3 dimentions explain ", pcVar, "% of the variance."))
+
+df <- cbind(ord_PCoA$vectors, sample_data(ps))
+
+df$Strain_1 <- factor(df$Strain_1 , levels = names(Strain_color_pal))
+
+comparison_list <- unique(ps@sam_data$Strain_Comparison[ps@sam_data$Species_Comparison %in% c("Mmus_vs_Mspic", "Mmus_vs_Mpah")])
+
+x <- c(rownames(df), "Strain_Comparison_2", "Sample_Type_2", "Fill_var", "Size_var", "Strain_1_2", "Strain_2_2")
+p_df <- data.frame(matrix(nrow = 0, ncol = length(x)))
+colnames(p_df) <- x
+
+for (i in seq_along(comparison_list)) {
+  i_Strain_Comparison <- comparison_list[i]
+  i_df <- df[df$Strain_Comparison == i_Strain_Comparison, ]
+  i_Strain_1 <- as.character(i_df$Strain_1)[1]
+  i_Strain_2 <- as.character(i_df$Strain_2)[1]
+ 
+  i_df$Strain_Comparison_2 <- i_Strain_Comparison
+  i_df$Sample_Type_2 <- "Sample"
+  i_df$Fill_var <- "Sample"
+  i_df$Size_var <- i_df$Time_Point
+  i_df$Strain_1_2 <- i_Strain_1
+  i_df$Strain_2_2 <- i_Strain_2
+
+  i_Strain_1_df <- df[df$Strain_Comparison == i_Strain_1, ]
+  i_Strain_1_df$Strain_Comparison_2 <- i_Strain_Comparison
+  i_Strain_1_df$Sample_Type_2 <- "Native_Donor"
+  i_Strain_1_df$Fill_var <- i_Strain_1
+  i_Strain_1_df$Size_var <- "w4"
+  i_Strain_1_df$Strain_1_2 <- i_Strain_1
+  i_Strain_1_df$Strain_2_2 <- i_Strain_2
+
+  i_Strain_2_df <- df[df$Strain_Comparison == i_Strain_2, ]
+  i_Strain_2_df$Strain_Comparison_2 <- i_Strain_Comparison
+  i_Strain_2_df$Sample_Type_2 <- "Non_Native_Donor"
+  i_Strain_2_df$Fill_var <- i_Strain_2
+  i_Strain_2_df$Size_var <- "w4"
+  i_Strain_2_df$Strain_1_2 <- i_Strain_1
+  i_Strain_2_df$Strain_2_2 <- i_Strain_2
+
+  p_df <- rbind(p_df, i_df)
+  p_df <- rbind(p_df, i_Strain_1_df)
+  p_df <- rbind(p_df, i_Strain_2_df)
+  
+}
+
+p_df$Fill_var <- factor(p_df$Fill_var, levels = c("Mmus_B6Con", "Mmus_LEW", "Mmus_NY2", "Mpah", "Mspic_SPITUA", "Mspic_ZBN", "Sample"))
+p_df$Strain_1_2 <- factor(p_df$Strain_1_2, levels = c("Mmus_B6Con", "Mmus_LEW",  "Mmus_NY2"))
+p_df$Strain_2_2 <- factor(p_df$Strain_2_2, levels = c("Mspic_ZBN", "Mspic_SPITUA", "Mpah"))
+
+Strain_1_facets <- c("C57", "LEW", "NY2")
+names(Strain_1_facets) <- c("Mmus_B6Con", "Mmus_LEW",  "Mmus_NY2")
+
+Strain_2_facets <- c("ZBN", "SPI", "PAH")
+names(Strain_2_facets) <- c("Mspic_ZBN", "Mspic_SPITUA", "Mpah")
+
+
+# Plot PC1 vs PC2
+p <- ggplot(p_df, aes(x = Axis.2, y = Axis.1))
+p <- p + geom_point(aes(fill = Fill_var, shape = Sample_Type_2, size = Size_var), color = "black", alpha = 0.9)
+p <- p + scale_shape_manual(name = "Sample Type", 
+          values = c("Sample" = 21, "Native_Donor" = 24, "Non_Native_Donor" = 23), 
+          labels = c("Sample" = "Sample", "Native_Donor" = "Native Donor", "Non_Native_Donor" = "Non-Native Donor"))
+p <- p + scale_size_manual(name = "Week", 
+          values = c("w1" = 1.5, "w2" = 2, "w3" = 3, "w4" = 3.5),
+          labels = c("w1" = 1,"w2" = 2, "w3" = 3, "w4" = 4))
+p <- p + scale_fill_manual(name = "Donor Strain", values = c(Strain_color_pal[c(1:3,6:8)], "Sample" = "darkgray"), 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "Ex-GF Mouse"
+             ))
+p <- p + guides(fill = guide_legend(order = 1, override.aes = list(shape = 21, size = 3.5)),
+                shape = guide_legend(order = 2, override.aes = list(size = 3.5)),
+                size = guide_legend(order = 3)
+                )
+p <- p + ylab(paste0("PC1 (", PC1, "%)"))
+p <- p + xlab(paste0("PC2 (", PC2, "%)"))
+p <- p + facet_grid(Strain_2_2 ~ Strain_1_2, switch = "y",
+                    labeller = labeller(
+                      Strain_1_2 = Strain_1_facets, 
+                      Strain_2_2 = Strain_2_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- "Figure_1D"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 8, height = 6)
+p
+invisible(dev.off())
+
+```
+
+
+```{r Exp 1 - Simulate Datasets}
+
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_1"))
+comparisons_to_keep <- c("Mmus_vs_Mspic", "Mmus_vs_Mpah")
+ps <- subset_samples(ps, Species_Comparison %in%  comparisons_to_keep)
+Exp_1_Samples_ps <- ps
+nsamples(Exp_1_Samples_ps)
+
+# Then make two versions of Donor_ps object
+# all Donor samples merged within a strain
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in% "Donor")
+Donors_unmerged_ps <- ps
+Donors_merged_ps <- suppressWarnings(merge_samples(ps, "Strain_1"))
+sample_names(Donors_merged_ps)
+
+### Simulate Inocula ###
+
+# Experiment 1 - simulated inocula
+
+# import qPCR Data
+df <- qPCR_df
+# already identified techincal replicates that vary by more than .5 qPCR cycles
+df <- df[is.na(df$Omit_Technical_Variation), ]
+# remove outlier/ failed DNA extractiom
+df <- df[df$Copies_16S_per_mg_Feces > 1000, ]
+# subset to only Donor Samples
+df <- df[df$Sample_Type == "Donor", ]
+# Average Replicates within a mouse line
+df <- df %>%
+  group_by(Strain, Species) %>%
+  summarise_at(vars(Copies_16S_per_mg_Feces), list(mean = mean))
+df <- data.frame(df)
+Copy_Number_df <- df
+
+# qPCR readings were not avialable for Pman or NY4, but we are going to add placeholders so that the inocula are simulated in the same way for Experiment 1 and 2 (null assumption is equal microbe load)
+x <- mean(df[which(df$Species == "Mmus"), "mean"]) # use mean Mmus load
+df <- data.frame(Strain = c("Mmus_NY4", "Pman"), Species = c("Mmus", "Pman"), mean = c(x))
+Copy_Number_df <- rbind(Copy_Number_df, df)
+
+# loop through Inocula, combine in best way possible, depending on the data type
+Exp_1_Inocula_list <- unique(Exp_1_Samples_ps@sam_data$Strain_Comparison)
+
+ps <- CU01_ps
+Inoculum_ps <- subset_samples(ps, Sample_Type %in% "Inoculum")
+
+Inocula_list <- Exp_1_Inocula_list
+for (i in seq_along(Inocula_list)) { 
+
+  i_Inoculum_name <- Inocula_list[i]
+  print(paste("Inoculum: ", i_Inoculum_name))
+  i_new_name <- paste0(i_Inoculum_name, "_Simulated_Inocula")
+  print(paste("Simulating: ", i_new_name))
+
+  # calculate the fractions of reads from each donor
+  i_ps <- subset_samples(Inoculum_ps, Strain_Comparison %in% i_Inoculum_name)
+  i_Donor_1 <- i_ps@sam_data$Strain_1
+  i_Donor_2 <- i_ps@sam_data$Strain_2
+
+  i_Donor_1_Mass <- i_ps@sam_data$Strain_1_Fecal_Mass * 1000
+  i_Donor_2_Mass <- i_ps@sam_data$Strain_2_Fecal_Mass * 1000
+
+  i_Donor_1_16S_Density <- Copy_Number_df[Copy_Number_df$Strain == i_Donor_1, "mean" ]
+  i_Donor_2_16S_Density  <- Copy_Number_df[Copy_Number_df$Strain == i_Donor_2, "mean" ]
+
+  i_Donor_1_16SCopies_In_Mix <- i_Donor_1_Mass * i_Donor_1_16S_Density
+  i_Donor_2_16SCopies_In_Mix <- i_Donor_2_Mass * i_Donor_2_16S_Density
+  i_16SCopies_In_Mix <- i_Donor_1_16SCopies_In_Mix + i_Donor_2_16SCopies_In_Mix
+
+  i_Donor_1_Fraction <- i_Donor_1_16SCopies_In_Mix / i_16SCopies_In_Mix
+  i_Donor_2_Fraction <- i_Donor_2_16SCopies_In_Mix / i_16SCopies_In_Mix
+  
+  print(paste0("     Donor 1: ", i_Donor_1, " Contrbutes ", round(i_Donor_1_Fraction, 2)*100 ,"% of the reads." ))
+  print(paste0("     Donor 2: ", i_Donor_2, " Contrbutes ", round(i_Donor_2_Fraction, 2)*100 ,"% of the reads." ))
+  
+  # sample the donors at the given read fraction for each donor
+  i_Individual_1 <- i_ps@sam_data$Individual_1
+  i_Individual_2 <- i_ps@sam_data$Individual_2
+  i_Individuals <- unique(c(i_Individual_1, i_Individual_2))
+  i_Strains <- unique(c(i_Donor_1, i_Donor_2))
+
+  # Unmerged Donors
+  i_Donors_unmerged_ps <- subset_samples(Donors_unmerged_ps, Individual_1 %in% i_Individuals)
+  sample_names(i_Donors_unmerged_ps) <- i_Donors_unmerged_ps@sam_data$Strain_1
+
+  i_Donors_unmerged_Seq_Depth <- min(sample_sums(i_Donors_unmerged_ps))
+
+  i_Donor_1_unmerged_Sample_Depth <- ceiling(i_Donors_unmerged_Seq_Depth * i_Donor_1_Fraction)
+  i_Donor_2_unmerged_Sample_Depth <- i_Donors_unmerged_Seq_Depth - i_Donor_1_unmerged_Sample_Depth
+
+  i_Donor_1_unmerged_ps <- subset_samples(Donors_unmerged_ps, Individual_1 %in% i_Individual_1)
+  i_Donor_1_unmerged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_1_unmerged_ps, 
+                          sample.size = i_Donor_1_unmerged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_1_unmerged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_unmerged")
+  
+  i_Donor_2_unmerged_ps <- subset_samples(Donors_unmerged_ps, Individual_2 %in% i_Individual_2)
+  i_Donor_2_unmerged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_2_unmerged_ps, 
+                          sample.size = i_Donor_2_unmerged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_2_unmerged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_unmerged")
+
+  i_Donors_unmerged_out_ps <- suppressMessages(merge_phyloseq(i_Donor_1_unmerged_ps, i_Donor_2_unmerged_ps))
+  i_Donors_unmerged_out_ps <- suppressWarnings(merge_samples(i_Donors_unmerged_out_ps, "Strain_Comparison"))
+  sample_names(i_ps) <- paste0(i_new_name, "_unmerged")
+  sample_data(i_Donors_unmerged_out_ps) <- sample_data(i_ps)
+
+  Exp_1_Samples_ps <- merge_phyloseq(Exp_1_Samples_ps, i_Donors_unmerged_out_ps)
+  
+  # Merged Donors
+  i_Donors_merged_ps <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) %in% i_Strains)
+  i_Donors_merged_Seq_Depth <- min(sample_sums(i_Donors_merged_ps))
+  
+  i_Donor_1_merged_Sample_Depth <- ceiling(i_Donors_merged_Seq_Depth * i_Donor_1_Fraction)
+  i_Donor_2_merged_Sample_Depth <- i_Donors_merged_Seq_Depth - i_Donor_1_merged_Sample_Depth
+
+  i_Donor_1_merged_ps <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) %in% i_Donor_1)
+  i_Donor_1_merged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_1_merged_ps, 
+                          sample.size = i_Donor_1_merged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_1_merged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_merged")
+  
+  i_Donor_2_merged_ps <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) %in% i_Donor_2)
+  i_Donor_2_merged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_2_merged_ps, 
+                          sample.size = i_Donor_2_merged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_2_merged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_merged")
+
+  i_Donors_merged_out_ps <- suppressMessages(merge_phyloseq(i_Donor_1_merged_ps, i_Donor_2_merged_ps))
+  i_Donors_merged_out_ps <- suppressWarnings(merge_samples(i_Donors_merged_out_ps, "Strain_Comparison"))
+  sample_names(i_ps) <- paste0(i_new_name, "_merged")
+  sample_data(i_Donors_merged_out_ps) <- sample_data(i_ps)
+
+  Exp_1_Samples_ps <- merge_phyloseq(Exp_1_Samples_ps, i_Donors_merged_out_ps)
+
+  }
+
+```
+
+```{r Exp 1 - Calculate Local Adaptation Index Table}
+
+# Experiment 1 - Calculate LAI
+
+ps <- Exp_1_Samples_ps
+
+# Then make two versions of Donor_ps object
+# all Donor samples merged within a strain
+dps <- CU01_ps
+dps <- subset_samples(dps, Sample_Type %in% "Donor")
+Donors_unmerged_ps <- dps
+Donors_merged_ps <- suppressWarnings(merge_samples(dps, "Strain_1"))
+sample_names(Donors_merged_ps)
+
+ps@sam_data$Sample_ID_2 <- ps@sam_data$Sample_ID
+ps@sam_data$Sample_ID <- sample_names(ps)
+
+# pull sample data from recipient samples and add places to accept results
+sample_data(ps) <- cbind(sample_data(ps), estimate_richness(ps), evenness(ps, index = "all"))
+sd <- data.frame(sample_data(ps))
+Sample_ID_list <- sample_names(ps)
+
+# List of data to record
+dist_list <- c("Jaccard", "Overlap", "Bray", "JSD", "Sorensen")
+x <- paste0("Distance_To_Donor_", rep(c(1, 2), each = length(dist_list)), "_", dist_list)
+x0 <- paste0("Distance_Between_Donors_", dist_list)
+y <- paste0("Difference_", dist_list)
+y0 <- paste0("Log_Ratio_", dist_list)
+y1 <- c("Donor_2_Richness","Donor_1_Shannon", "Donor_2_Shannon", "Donor_1_Evenness", "Donor_2_Evenness")
+y2 <- c("N_Donor_1_In_Sample", "N_Donor_1_Not_In_Sample",
+        "N_Donor_1_Exclusive_In_Sample", "N_Donor_1_Exclusive_Not_In_Sample",
+        "N_Donor_2_In_Sample", "N_Donor_2_Not_In_Sample",
+        "N_Donor_2_Exclusive_In_Sample", "N_Donor_2_Exclusive_Not_In_Sample",
+        "N_Shared_In_Sample", "N_Unknown_In_Sample")
+z <- c(x, x0, y, y0, "Mmus_Count", "Seq_Depth", "ASV_Richness", "Taxa_Level_Richness", "Donor_1_Richness", y1, y2)
+
+df <- data.frame(matrix(nrow = nsamples(ps), ncol = length(z))) 
+colnames(df) <- z
+sd <- cbind(sd, df)
+sd <- data.frame(sd)
+sd$Taxa_Set <- "All_Taxa"
+
+# fix sample names
+sample_names(Donors_unmerged_ps) <- Donors_unmerged_ps@sam_data$Individual_1
+
+merged_sd <- sd
+
+# for loop that finds dist to both donors for each sample
+for (i in seq_along(Sample_ID_list)) {
+  
+  print(paste0( " |||||||  ", percent(i / length(Sample_ID_list)), " Complete", "  ||||||| "))
+
+  # subset dataset
+  i_Sample_ID <- Sample_ID_list[i]
+  print(paste0("Analyzing Sample: ", i_Sample_ID))
+  i_ps <- subset_samples(ps, sample_names(ps) == i_Sample_ID)
+  
+  # identify donors
+  i_Strain_1 <- sd$Strain_1[i]
+  i_Strain_2 <- sd$Strain_2[i]
+  
+  i_Individual_1 <- sd$Individual_1[i]
+  i_Individual_2 <- sd$Individual_2[i]
+
+  print(paste0( "       Donor 1: ", i_Strain_1, " (",i_Individual_1,")  |   Donor 2: ", i_Strain_2, " (", i_Individual_2, ")"))
+
+  # # # # # NOW USE MERGED SAMPLES AS THE DONORS # # # #
+    
+  # Count how many Mus musculus strains are included in this comparison
+  merged_sd[i, "Mmus_Count"] <- sum(grepl("Mmus", c(i_Strain_1, i_Strain_2)))
+
+  i_row <- which(merged_sd$Sample_ID == i_Sample_ID & merged_sd$Taxa_Set == "All_Taxa")
+  
+  # Calculate Alpha Diversity
+  i_Strain_1_ps  <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) == i_Strain_1)
+  i_Donor_1_Richness <- as.numeric(estimate_richness(i_Strain_1_ps, measures = c("Observed")))
+  i_Donor_1_Shannon <- as.numeric(estimate_richness(i_Strain_1_ps, measures = c("Shannon")))
+  i_Donor_1_Evenness <- as.numeric(evenness(i_Strain_1_ps, index = "pielou"))
+  
+  i_Strain_2_ps  <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) == i_Strain_2)
+  i_Donor_2_Richness <- as.numeric(estimate_richness(i_Strain_2_ps, measures = c("Observed")))
+  i_Donor_2_Shannon <- as.numeric(estimate_richness(i_Strain_2_ps, measures = c("Shannon")))
+  i_Donor_2_Evenness <- as.numeric(evenness(i_Strain_2_ps, index = "pielou"))
+
+  merged_sd[i_row, "Donor_1_Richness"] <- i_Donor_1_Richness
+  merged_sd[i_row, "Donor_1_Shannon"] <- i_Donor_1_Shannon
+  merged_sd[i_row, "Donor_1_Evenness"] <- i_Donor_1_Evenness
+  merged_sd[i_row, "Donor_2_Richness"] <- i_Donor_2_Richness
+  merged_sd[i_row, "Donor_2_Shannon"] <- i_Donor_2_Shannon
+  merged_sd[i_row, "Donor_2_Evenness"] <- i_Donor_2_Evenness
+  
+  # y2
+  i_Sample_Taxa <- taxa_names(prune_taxa(taxa_sums(i_ps) > 0, i_ps))
+  i_Donor_1_Taxa <- taxa_names(prune_taxa(taxa_sums(i_Strain_1_ps) > 0, i_Strain_1_ps))
+  i_Donor_2_Taxa <- taxa_names(prune_taxa(taxa_sums(i_Strain_2_ps) > 0, i_Strain_2_ps))
+  i_Donor_Shared_Taxa <- i_Donor_1_Taxa[i_Donor_1_Taxa %in% i_Donor_2_Taxa]
+  i_Donor_1_Exclusive_Taxa <- i_Donor_1_Taxa[!i_Donor_1_Taxa %in% i_Donor_2_Taxa]
+  i_Donor_2_Exclusive_Taxa <- i_Donor_2_Taxa[!i_Donor_2_Taxa %in% i_Donor_1_Taxa]
+
+  N_Donor_1_In_Sample <- i_Donor_1_Taxa[i_Donor_1_Taxa %in% i_Sample_Taxa]
+  N_Donor_1_Not_In_Sample <- i_Donor_1_Taxa[!i_Donor_1_Taxa %in% i_Sample_Taxa]
+
+  N_Donor_1_Exclusive_In_Sample <- i_Donor_1_Exclusive_Taxa[i_Donor_1_Exclusive_Taxa %in% i_Sample_Taxa]
+  N_Donor_1_Exclusive_Not_In_Sample <- i_Donor_1_Exclusive_Taxa[!i_Donor_1_Exclusive_Taxa %in% i_Sample_Taxa]
+
+  N_Donor_2_In_Sample <- i_Donor_2_Taxa[i_Donor_2_Taxa %in% i_Sample_Taxa]
+  N_Donor_2_Not_In_Sample <- i_Donor_2_Taxa[!i_Donor_2_Taxa %in% i_Sample_Taxa]
+
+  N_Donor_2_Exclusive_In_Sample <- i_Donor_2_Exclusive_Taxa[i_Donor_2_Exclusive_Taxa %in% i_Sample_Taxa]
+  N_Donor_2_Exclusive_Not_In_Sample <- i_Donor_2_Exclusive_Taxa[!i_Donor_2_Exclusive_Taxa %in% i_Sample_Taxa]
+
+  N_Shared_In_Sample <- i_Donor_Shared_Taxa[i_Donor_Shared_Taxa %in% i_Sample_Taxa]
+  N_Unknown_In_Sample <- i_Sample_Taxa[!i_Sample_Taxa %in% unique(i_Donor_1_Taxa, i_Donor_2_Taxa)]
+  
+  merged_sd[i_row, "N_Donor_1_In_Sample"] <- length(N_Donor_1_In_Sample)
+  merged_sd[i_row, "N_Donor_1_Not_In_Sample"] <- length(N_Donor_1_Not_In_Sample)
+  merged_sd[i_row, "N_Donor_1_Exclusive_In_Sample"] <- length(N_Donor_1_Exclusive_In_Sample)
+  merged_sd[i_row, "N_Donor_1_Exclusive_Not_In_Sample"] <- length(N_Donor_1_Exclusive_Not_In_Sample)
+
+  merged_sd[i_row, "N_Donor_2_In_Sample"] <- length(N_Donor_2_In_Sample)
+  merged_sd[i_row, "N_Donor_2_Not_In_Sample"] <- length(N_Donor_2_Not_In_Sample)
+  merged_sd[i_row, "N_Donor_2_Exclusive_In_Sample"] <- length(N_Donor_2_Exclusive_In_Sample)
+  merged_sd[i_row, "N_Donor_2_Exclusive_Not_In_Sample"] <- length(N_Donor_2_Exclusive_Not_In_Sample)
+
+  merged_sd[i_row, "N_Shared_In_Sample"] <- length(N_Shared_In_Sample)
+  merged_sd[i_row, "N_Unknown_In_Sample"] <- length(N_Unknown_In_Sample)
+
+  # Calculate Similarity to Donors
+
+  i_Merged_ps <- merge_phyloseq(i_ps, i_Strain_1_ps, i_Strain_2_ps)
+  i_Merged_merged_ps <- i_Merged_ps
+  i_Seq_Depth <- min(sample_sums(i_Merged_ps))
+  merged_sd[i_row, "Seq_Depth"] <- i_Seq_Depth
+  i_Normalized_ps <- suppressMessages(rarefy_even_depth(i_Merged_ps, sample.size = i_Seq_Depth, rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Normalized_merged_ps <- i_Normalized_ps
+  i_Normalized_Rich_ps <- suppressMessages(rarefy_even_depth(i_Merged_ps, sample.size = i_Seq_Depth, rngseed = 8675309, replace = FALSE, trimOTUs = TRUE))
+  merged_sd[i_row, "ASV_Richness"] <- ntaxa(i_Normalized_Rich_ps)
+
+  print(paste0( "Merged       All Taxa       Seq_Depth: ", prettyNum(i_Seq_Depth, big.mark = ","), " reads per sample. Total Richness: ", ntaxa(i_Normalized_Rich_ps), " ASVs"))
+
+  # Jaccard
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "jaccard", binary = TRUE))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_Jaccard"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Jaccard"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Jaccard"] <- i_dist_donors
+  merged_sd[i_row, "Difference_Jaccard"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_Jaccard"] <- log2(i_dist_1 / i_dist_2)
+
+  # Overlap 
+  merged_sd[i_row, "Distance_To_Donor_1_Overlap"] <- 1 - i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Overlap"] <- 1 - i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Overlap"] <- 1 - i_dist_donors
+  merged_sd[i_row, "Difference_Overlap"] <- (1 - i_dist_1) - (1 - i_dist_2)
+  merged_sd[i_row, "Log_Ratio_Overlap"] <- log2((1 - i_dist_1) / (1 - i_dist_2))
+
+  # Bray
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "bray"))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_Bray"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Bray"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Bray"] <- i_dist_donors
+  merged_sd[i_row, "Difference_Bray"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_Bray"] <- log2(i_dist_1 / i_dist_2)
+
+  # Jensen-Shannon Divergence 
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "jsd"))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_JSD"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_JSD"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_JSD"] <- i_dist_donors
+  merged_sd[i_row, "Difference_JSD"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_JSD"] <- log2(i_dist_1 / i_dist_2)
+
+  # Sørensen dissimilarity 
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "sor", binary = TRUE))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_Sorensen"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Sorensen"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Sorensen"] <- i_dist_donors
+  merged_sd[i_row, "Difference_Sorensen"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_Sorensen"] <- log2(i_dist_1 / i_dist_2)
+
+}
+
+# remove empty rows
+Exp_1_LAI_Table_merged_df <- merged_sd[!is.na(merged_sd$Difference_Overlap),]
+dim(Exp_1_LAI_Table_merged_df) # [1] 94 91
+# Write out table as a text file
+write.table(Exp_1_LAI_Table_merged_df, file.path(Save_fp, "Exp_1_LAI_Table_merged_df.txt"), sep = "\t", quote = FALSE, row.names = FALSE)
+# Save R data object
+saveRDS(Exp_1_LAI_Table_merged_df, file.path(Save_fp, "Exp_1_LAI_Table_merged_df.rds"))
+
+```
+
+# Fig. 1E – Exp 1 - Plot Local Adaptation Index 
+
+```{r Fig 1E}
+
+# run code chunk `Exp 1 - Calculate Local Adaptation Index Table`
+
+df <- Exp_1_LAI_Table_merged_df
+# df <- Exp_1_LAI_Table_merged_1_df
+# df <- Exp_1_LAI_Table_merged_2_df
+
+# remove inocula samples
+df <- df[df$Week != 0,]
+dim(df)
+
+df$Week <- factor(df$Week, levels = c(1:4))
+
+stat_df <- df %>%
+  group_by(Week) %>%
+  wilcox_test(Difference_Overlap ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Week")
+stat_df
+
+y_var <- max(abs(df$Difference_Overlap)) + 0.05
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Week, y = Difference_Overlap), fill = "lightgray", color = "black",  outlier.shape = NA, width = .4)
+p <- p + geom_path(aes(x = Week, y = Difference_Overlap, group = Strain_Comparison, color = Strain_2), alpha = .2)
+p <- p + geom_point(aes(x = Week, y = Difference_Overlap, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2)
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_B6Con" = 22, "Mmus_LEW" = 21, "Mmus_NY2" =  23), 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2"
+             ))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(6:8)], 
+             labels = c(
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(6:8)], 
+             labels = c(
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + xlab("Weeks Post Colonization")
+p <- p + ylab("Local Adaptation Index")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- paste0("Figure_1E")
+
+legend <- get_legend(p)
+grid.newpage()
+grid.draw(legend)
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. 1F – Exp 1 - Observed LAI - Expected LAI
+
+```{r Fig 1F}
+
+# run code chunk `Exp 1 - Calculate Local Adaptation Index Table`
+
+df <- Exp_1_LAI_Table_merged_df
+
+# partition out Simulated Inocula samples that use merged Inocula
+Inocula_merged_df <- df[grep("Simulated_Inocula_merged", rownames(df)),] # merged Donors
+
+# remove inocula samples
+df <- df[df$Week != 0,]
+dim(df)
+
+df$Inocula_LAI_merged <- Inocula_merged_df$Difference_Overlap[match(df$Strain_Comparison,
+                                                                        Inocula_merged_df$Strain_Comparison)]
+df$Difference_Overlap_Inocula_LAI_merged <- df$Difference_Overlap - df$Inocula_LAI_merged
+
+df$Week <- factor(df$Week, levels = c(1:4))
+
+stat_df <- df %>%
+  group_by(Week) %>%
+  wilcox_test(Difference_Overlap_Inocula_LAI_merged ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Week")
+stat_df
+
+y_var <- max(abs(df$Difference_Overlap_Inocula_LAI_merged)) + 0.05
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Week, y = Difference_Overlap_Inocula_LAI_merged), fill = "lightgray", color = "black",  outlier.shape = NA, width = .4)
+p <- p + geom_path(aes(x = Week, y = Difference_Overlap_Inocula_LAI_merged, group = Strain_Comparison, color = Strain_2), alpha = .2)
+p <- p + geom_point(aes(x = Week, y = Difference_Overlap_Inocula_LAI_merged, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2)
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_B6Con" = 22, "Mmus_LEW" = 21, "Mmus_NY2" =  23), 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2"
+             ))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(6:8)], 
+             labels = c(
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(6:8)], 
+             labels = c(
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + xlab("Weeks Post Colonization")
+p <- p + ylab("Observed LAI - Expected LAI")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- paste0("Figure_1F")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+
+# Fig. 1G – Exp 1 - SourceTracker
+
+```{r Fig 1G}
+
+# run code chunk `Exp 1 and 2 - SourceTracker`
+
+df <- SourceTracker_df
+
+df <- df[df$Sequencing_Run == "Seq_Run_1", ]
+df <- df[df$Sample_Type == "Feces_Output", ]
+
+comparisons_to_keep <- c("Mmus_vs_Mspic", "Mmus_vs_Mpah")
+df <- df[df$Species_Comparison %in% comparisons_to_keep, ]
+df$Species_Comparison <- factor(df$Species_Comparison, levels = comparisons_to_keep)
+
+df$Week <- factor(df$Week, levels = c(1:4))
+
+stat_df <- df %>%
+  group_by(Week) %>%
+  wilcox_test(log10_Donor_Ratio ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Week")
+stat_df
+
+y_var <- max(abs(df$log10_Donor_Ratio)) + 0.5
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Week, y = log10_Donor_Ratio), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.4)
+p <- p + geom_path(aes(x = Week, y = log10_Donor_Ratio, group = Mouse_ID, color = Strain_2), alpha = .2)
+p <- p + geom_point(aes(x = Week, y = log10_Donor_Ratio, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2)
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_B6Con" = 22, "Mmus_LEW" = 21, "Mmus_NY2" =  23), 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2"
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(6:8)], 
+             labels = c(
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(6:8)], 
+             labels = c(
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + xlab("Weeks Post Colonization")
+p <- p + ylab("SourceTracker ratio")
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_1G"
+
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+
+```
+
+# Fig. S4 - Exp 1 - Microbiota Similarity to Donor/Non-Donor
+
+```{r Fig S4}
+
+ps <- CU01_ps
+
+# subset to the first sequecing run
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_1"))
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+comparisons_to_keep <- c("Mmus_vs_Mspic", "Mmus_vs_Mpah")
+ps <- subset_samples(ps, Species_Comparison %in%  comparisons_to_keep)
+ps <- subset_samples(ps, Time_Point %in%  c("w1"))
+ps # 6903 taxa and 19 samples
+sample_names(ps)
+
+Donor_ps <- CU01_ps
+Donor_ps <- subset_samples(Donor_ps, Sample_Type %in% "Donor")
+Donor_ps <- suppressWarnings(merge_samples(Donor_ps, "Strain_1"))
+Donor_ps@sam_data$Sample_Type <- "Donor"
+Donor_ps@sam_data$Strain_1 <- sample_names(Donor_ps)
+Donor_ps # 6903 taxa and 9 samples
+sample_names(Donor_ps)
+
+ps <- merge_phyloseq(ps, Donor_ps)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps # 2346 taxa and 28 samples
+
+# normalize for sequencing depth
+ps <- rarefy_even_depth(ps, sample.size = 10000, rngseed = 8675309)
+ps # 1722 taxa and 28 samples
+table(ps@sam_data$Sample_Type)
+
+
+jaccard_mat <- as.matrix(phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE))
+
+dist_df <- make_distance_df(ps, variables = c("Strain_1",  "Sample_Type"), distances = c("jaccard"))
+dist_df$Overlap <- 1 - dist_df$jaccard
+dim(dist_df)
+head(dist_df)
+
+# First subset to different sample types
+df <- dist_df
+df <- df[which(df$same_Sample_Type == "no"),]
+dim(df) # [1] 171  10
+head(df)
+table(df$sample1)
+table(df$sample2)
+# Fecal_Output samples are sample1, Donors are sample2
+df$Mixture_Strain1 <- sapply(strsplit(df$sample1, "_vs_"), `[`, 1)
+df$Mixture_Strain2 <- sapply(strsplit(df$sample1, "_vs_"), `[`, 2)
+df$Mixture_Strain2 <- sapply(strsplit(df$Mixture_Strain2, "_m"), `[`, 1)
+head(df)
+
+df$Group <- "Non-Donor"
+df$Group[which(df$Mixture_Strain1 == df$s2_Strain_1 | df$Mixture_Strain2 == df$s2_Strain_1)] <- "Donor"
+df$Group <- factor(df$Group, levels = c("Donor", "Non-Donor"))
+table(df$Group)
+# Different      Same 
+#       133        38 
+
+# spot check
+df[df$Group == "Same", c("sample1", "Mixture_Strain1", "Mixture_Strain2", "s2_Strain_1")]
+df[df$Group == "Different", c("sample1", "Mixture_Strain1", "Mixture_Strain2", "s2_Strain_1")]
+
+stat_df <- df %>%
+  wilcox_test(Overlap ~ Group, p.adjust.method = "fdr")  %>%
+  add_significance("p") %>%
+  add_xy_position(x = "Group")
+stat_df
+
+p <- ggplot(df)
+p <- p + geom_boxplot(aes(x = Group, y = Overlap), fill = "lightgray", outlier.shape = NA)
+p <- p + geom_point(aes(x = Group, y = Overlap), shape = 21, alpha = .7, position = position_jitter(width = 0.2), fill = "lightgray")
+p <- p + ylab("Microbiome Similarity")
+p <- p + xlab("")
+p <- p + ylim(0, 0.35)
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p
+
+file_name <- "Figure_S4"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2, height = 2)
+p
+invisible(dev.off())
+
+```
+
+
+# Fig. S5 - Exp 2 - Microbiota Similarity to Donor/Non-Donor
+
+```{r Fig S5}
+
+ps <- CU01_ps
+
+# subset to the first sequecing run
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Time_Point %in%  c("w4"))
+ps # 6903 taxa and 74 samples
+sample_names(ps)
+
+Donor_ps <- CU01_ps
+Donor_ps <- subset_samples(Donor_ps, Sample_Type %in% "Donor")
+Donor_ps <- suppressWarnings(merge_samples(Donor_ps, "Strain_1"))
+Donor_ps@sam_data$Sample_Type <- "Donor"
+Donor_ps@sam_data$Strain_1 <- sample_names(Donor_ps)
+Donor_ps # 6903 taxa and 9 samples
+sample_names(Donor_ps)
+
+ps <- merge_phyloseq(ps, Donor_ps)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps # 2786 taxa and 83 samples
+
+# normalize for sequencing depth
+ps <- rarefy_even_depth(ps, sample.size = 10000, rngseed = 8675309)
+ps # 2095 taxa and 80 samples
+table(ps@sam_data$Sample_Type)
+#        Donor Feces_Output 
+#           9           71 
+
+
+jaccard_mat <- as.matrix(phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE))
+
+dist_df <- make_distance_df(ps, variables = c("Strain_1",  "Sample_Type"), distances = c("jaccard"))
+dist_df$Overlap <- 1 - dist_df$jaccard
+dim(dist_df)
+head(dist_df)
+
+# First subset to different sample types
+df <- dist_df
+df <- df[which(df$same_Sample_Type == "no"),]
+dim(df) # [1] 639  10
+df$Mixture_Strain1 <- NA
+df$Mixture_Strain2 <- NA
+df$Mixture_Strain1[grep("PmanNY4", df$sample1)] <- "Mmus_NY4"
+df$Mixture_Strain2[grep("PmanNY4", df$sample1)] <- "Pman"
+df$Mixture_Strain1[grep("MpahFL1", df$sample1)] <- "Mmus_FL1"
+df$Mixture_Strain2[grep("MpahFL1", df$sample1)] <- "Mpah"
+table(df$Mixture_Strain1, useNA = "always")
+table(df$Mixture_Strain2, useNA = "always")
+
+df$Group <- "Non-Donor"
+df$Group[which(df$Mixture_Strain1 == df$s2_Strain_1 | df$Mixture_Strain2 == df$s2_Strain_1)] <- "Donor"
+df$Group <- factor(df$Group, levels = c("Donor", "Non-Donor"))
+
+# spot check
+df[df$Group == "Donor", c("sample1", "Mixture_Strain1", "Mixture_Strain2", "s2_Strain_1")]
+df[df$Group == "Non-Donor", c("sample1", "Mixture_Strain1", "Mixture_Strain2", "s2_Strain_1")]
+
+stat_df <- df %>%
+  wilcox_test(Overlap ~ Group, p.adjust.method = "fdr")  %>%
+  add_significance("p") %>%
+  add_xy_position(x = "Group")
+stat_df
+
+p <- ggplot(df)
+p <- p + geom_boxplot(aes(x = Group, y = Overlap), fill = "lightgray", outlier.shape = NA)
+p <- p + geom_point(aes(x = Group, y = Overlap), shape = 21, alpha = .7, position = position_jitter(width = 0.2), fill = "lightgray")
+p <- p + ylab("Microbiome Similarity")
+p <- p + xlab("")
+p <- p + ylim(0, 0.55)
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p
+
+file_name <- "Figure_S5"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2, height = 2)
+p
+invisible(dev.off())
+
+```
+
+# Fig. 2B – Exp 2 - PCoA of donor and recipients 4 facets same axes
+
+
+```{r Fig 2B}
+
+# Principal Coordinate Analysis 
+
+ps <- CU01_ps
+
+# subset to first experiment
+ps <- subset_samples(ps, Sequencing_Run %in% c("Seq_Run_2"))
+
+# subset to only donor samples
+ps <- subset_samples(ps, Sample_Type %in% c("Donor", "Feces_Output"))
+table(ps@sam_data$Sample_Type)
+
+comparisons_to_keep <- c("Mmus_vs_Mpah", "Mmus_vs_Pman", "Mmus", "Mpah", "Pman")
+ps <- subset_samples(ps, Species_Comparison %in%  comparisons_to_keep)
+
+# remove samples with less than 10,000 reads
+ps <- prune_samples(sample_sums(ps) > 10000, ps)
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309) 
+
+# ordinate
+ps_ord <- phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE)
+ord_PCoA <- ordinate(ps, "PCoA", distance = ps_ord)
+# plot_scree(ord_PCoA)
+PC1 <- round(ord_PCoA$values$Relative_eig[1]*100, 1)
+PC2 <- round(ord_PCoA$values$Relative_eig[2]*100, 1)
+PC3 <- round(ord_PCoA$values$Relative_eig[3]*100, 1)
+pcVar <- PC1 + PC2 + PC3
+print(paste0("Top 3 dimentions explain ", pcVar, "% of the variance."))
+
+df <- cbind(ord_PCoA$vectors, sample_data(ps))
+
+df$Strain_1 <- factor(df$Strain_1 , levels = names(Strain_color_pal))
+
+comparison_list <- unique(ps@sam_data$Strain_Comparison[ps@sam_data$Species_Comparison %in% c("Mmus_vs_Mpah", "Mmus_vs_Pman")])
+
+x <- c(rownames(df), "Strain_Comparison_2", "Sample_Type_2", "Fill_var", "Size_var", "Strain_1_2", "Strain_2_2")
+p_df <- data.frame(matrix(nrow = 0, ncol = length(x)))
+colnames(p_df) <- x
+
+for (i in seq_along(comparison_list)) {
+  i_Strain_Comparison <- comparison_list[i]
+  i_df <- df[df$Strain_Comparison == i_Strain_Comparison, ]
+  i_Strain_1 <- as.character(i_df$Strain_1)[1]
+  i_Strain_2 <- as.character(i_df$Strain_2)[1]
+ 
+  i_df$Strain_Comparison_2 <- i_Strain_Comparison
+  i_df$Sample_Type_2 <- "Sample"
+  i_df$Fill_var <- "Sample"
+  i_df$Size_var <- i_df$Time_Point
+  i_df$Strain_1_2 <- i_Strain_1
+  i_df$Strain_2_2 <- i_Strain_2
+
+  i_Strain_1_df <- df[df$Strain_Comparison == i_Strain_1, ]
+  i_Strain_1_df$Strain_Comparison_2 <- i_Strain_Comparison
+  i_Strain_1_df$Sample_Type_2 <- "Native_Donor"
+  i_Strain_1_df$Fill_var <- i_Strain_1
+  i_Strain_1_df$Size_var <- "w6"
+  i_Strain_1_df$Strain_1_2 <- i_Strain_1
+  i_Strain_1_df$Strain_2_2 <- i_Strain_2
+
+  i_Strain_2_df <- df[df$Strain_Comparison == i_Strain_2, ]
+  i_Strain_2_df$Strain_Comparison_2 <- i_Strain_Comparison
+  i_Strain_2_df$Sample_Type_2 <- "Non_Native_Donor"
+  i_Strain_2_df$Fill_var <- i_Strain_2
+  i_Strain_2_df$Size_var <- "w6"
+  i_Strain_2_df$Strain_1_2 <- i_Strain_1
+  i_Strain_2_df$Strain_2_2 <- i_Strain_2
+
+  p_df <- rbind(p_df, i_df)
+  p_df <- rbind(p_df, i_Strain_1_df)
+  p_df <- rbind(p_df, i_Strain_2_df)
+  
+}
+
+p_df$Fill_var <- factor(p_df$Fill_var, levels = c("Mmus_FL1", "Mpah", "Mmus_NY4", "Pman", "Sample"))
+p_df$Strain_1_2 <- factor(p_df$Strain_1_2, levels = c("Mmus_FL1", "Mmus_NY4"))
+p_df$Strain_2_2 <- factor(p_df$Strain_2_2, levels = c("Mpah", "Pman"))
+
+Strain_1_facets <- c("FL1", "NY4")
+names(Strain_1_facets) <- c("Mmus_FL1", "Mmus_NY4")
+
+Strain_2_facets <- c("PAH", "PMAN")
+names(Strain_2_facets) <- c("Mpah", "Pman")
+
+Strain_Comparison_facets <- c("FL1 + PAH", "NY4 + PMAN")
+names(Strain_Comparison_facets) <- c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")
+
+p_df$Sample_Type_3 <- p_df$Sample_Type_2
+p_df$Sample_Type_3[p_df$Recipient_Genotype == "Rag1"] <- "Rag1"
+p_df$Sample_Type_3[p_df$Recipient_Genotype == "WT"] <- "WT"
+table(p_df$Sample_Type_3)
+
+p_df$Sample_Type_3 <- factor(p_df$Sample_Type_3, levels = c("WT", "Rag1", "Native_Donor", "Non_Native_Donor"))
+
+p_df$Fill2_var <- as.character(p_df$Fill_var)
+p_df$Fill2_var[p_df$Sample_Type_3 == "WT"] <- "WT"
+p_df$Fill2_var[p_df$Sample_Type_3 == "Rag1"] <- "Rag1"
+p_df$Fill2_var <- factor(p_df$Fill2_var, levels = c("Mmus_FL1", "Mpah", "Mmus_NY4", "Pman", "WT", "Rag1"))
+
+# Plot PC1 vs PC2
+p <- ggplot(p_df, aes(x = Axis.2, y = Axis.1))
+p <- p + geom_point(aes(fill = Fill2_var, shape = Sample_Type_3, size = Size_var), color = "black", alpha = 0.8)
+p <- p + scale_shape_manual(name = "Sample Type", 
+          values = c("WT" = 21, "Rag1" = 22, "Native_Donor" = 24, "Non_Native_Donor" = 23), 
+          labels = c("WT" = "Wildtype", "Rag1" = "Rag1 -/-", "Native_Donor" = "Native Donor", "Non_Native_Donor" = "Non-Native Donor"), 
+          guide = "none")
+p <- p + scale_size_manual(name = "Week", 
+          values = c("w4" = 2, "w6" = 4),
+          labels = c("w4" = 4, "w6" = 6))
+p <- p + scale_fill_manual(name = "Sample Type", values = c(Strain_color_pal[c(5, 8, 4, 9)], "WT" = "lightsteelblue4", "Rag1" = "lemonchiffon3"), 
+             labels = c(
+             "FL1 donor",
+             "PAH donor",
+             "NY4 donor",
+             "PMAN donor",
+             "Wildtype Ex-GF mouse",
+             "Rag1 -/- Ex-GF mouse"
+             ))
+p <- p + guides(fill = guide_legend(order = 1, override.aes = list(shape = c(24, 23, 24,23, 21, 21), size = 3.5)),
+                size = guide_legend(order = 2)
+                )
+p <- p + ylab(paste0("PC1 (", PC1, "%)"))
+p <- p + xlab(paste0("PC2 (", PC2, "%)"))
+p <- p + facet_grid( ~ Strain_Comparison_2, 
+                    labeller = labeller(
+                      Strain_Comparison_2 = Strain_Comparison_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",color = NA),
+  panel.border = element_rect(fill = NA, color = "black"),
+  plot.background = element_rect(fill = "transparent", color = NA),
+  legend.background = element_rect(fill = "transparent",color = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent", color = NA),
+)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- "Figure_2B"
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 6, height = 3)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+```
+
+```{r Exp 2 - Simulate Datasets}
+
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+comparisons_to_keep <- c("Mmus_vs_Mpah", "Mmus_vs_Pman")
+ps <- subset_samples(ps, Species_Comparison %in%  comparisons_to_keep)
+Exp_2_Samples_ps <- ps
+nsamples(Exp_2_Samples_ps)
+
+### Donor Data ###
+
+# Then make two versions of Donor_ps object
+# all Donor samples merged within a strain
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in% "Donor")
+Donors_unmerged_ps <- ps
+Donors_merged_ps <- suppressWarnings(merge_samples(ps, "Strain_1"))
+sample_names(Donors_merged_ps)
+
+# one Donor sample per strain, randomly selected
+require("dplyr")
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in% "Donor")
+sd <- data.frame(sample_data(ps))
+sd <- sd %>% group_by(Strain_1) %>% slice_sample(n = 1)
+samples_to_keep <- sd$Sample_ID
+Donors_selected_ps <- subset_samples(ps, Sample_ID %in% samples_to_keep)
+sample_names(Donors_selected_ps) <- Donors_selected_ps@sam_data$Strain_1
+sample_names(Donors_selected_ps)
+
+### Simulate Inocula ###
+
+# now simulate inocula for each experiment
+
+# import qPCR Data
+qPCR_fp <- "/Users/danielsprockett/Documents/Moeller_Lab/Projects/CU01_Host_Selection/qPCR_Data/"
+df <- read.table(file.path(qPCR_fp, "CU01_qPCR_Results_v3_220418.txt"), header = TRUE, sep = "\t")
+# already identified techincal replicates that vary by more than .5 qPCR cycles
+df <- df[is.na(df$Omit_Technical_Variation), ]
+# remove outlier/ failed DNA extractiom
+df <- df[df$Copies_16S_per_mg_Feces > 1000, ]
+# subset to only Donor Samples
+df <- df[df$Sample_Type == "Donor", ]
+# Average Replicates within a mouse line
+df <- df %>%
+  group_by(Strain, Species) %>%
+  summarise_at(vars(Copies_16S_per_mg_Feces), list(mean = mean))
+df <- data.frame(df)
+Copy_Number_df <- df
+
+# qPCR readings were not avialable for Pman or NY4, but we are going to add placeholders so that the inocula are simulated in the same way for Experiment 1 and 2 (null assumption is equal microbe load)
+x <- mean(df[which(df$Species == "Mmus"), "mean"]) # use mean Mmus load
+df <- data.frame(Strain = c("Mmus_NY4", "Pman"), Species = c("Mmus", "Pman"), mean = c(x))
+Copy_Number_df <- rbind(Copy_Number_df, df)
+
+Exp_2_Inocula_list <- unique(Exp_2_Samples_ps@sam_data$Strain_Comparison)
+
+Inocula_list <- Exp_2_Inocula_list
+for (i in seq_along(Inocula_list)) { 
+
+  i_Inoculum_name <- Inocula_list[i]
+  print(paste("Inoculum: ", i_Inoculum_name))
+  i_new_name <- paste0(i_Inoculum_name, "_Simulated_Inocula")
+  print(paste("Simulating: ", i_new_name))
+  
+  # calculate the fractions of reads from each donor
+  i_ps <- subset_samples(CU01_ps, Strain_Comparison %in% i_Inoculum_name)
+  i_ps <- subset_samples(i_ps, sample_names(i_ps) %in% sample_names(i_ps)[1]) # use first sample
+  i_Donor_1 <- i_ps@sam_data$Strain_1
+  i_Donor_2 <- i_ps@sam_data$Strain_2
+  
+  # don't have mass data for exp 2, assume 50:50
+  i_Donor_1_Mass <- mean(CU01_ps@sam_data$Strain_1_Fecal_Mass, na.rm = TRUE) * 1000
+  i_Donor_2_Mass <- mean(CU01_ps@sam_data$Strain_1_Fecal_Mass, na.rm = TRUE) * 1000
+
+  i_Donor_1_16S_Density <- Copy_Number_df[Copy_Number_df$Strain == i_Donor_1, "mean" ]
+  i_Donor_2_16S_Density  <- Copy_Number_df[Copy_Number_df$Strain == i_Donor_2, "mean" ]
+
+  i_Donor_1_16SCopies_In_Mix <- i_Donor_1_Mass * i_Donor_1_16S_Density
+  i_Donor_2_16SCopies_In_Mix <- i_Donor_2_Mass * i_Donor_2_16S_Density
+  i_16SCopies_In_Mix <- i_Donor_1_16SCopies_In_Mix + i_Donor_2_16SCopies_In_Mix
+
+  i_Donor_1_Fraction <- i_Donor_1_16SCopies_In_Mix / i_16SCopies_In_Mix
+  i_Donor_2_Fraction <- i_Donor_2_16SCopies_In_Mix / i_16SCopies_In_Mix
+  
+  print(paste0("     Donor 1: ", i_Donor_1, " Contrbutes ", round(i_Donor_1_Fraction, 2)*100 ,"% of the reads." ))
+  print(paste0("     Donor 2: ", i_Donor_2, " Contrbutes ", round(i_Donor_2_Fraction, 2)*100 ,"% of the reads." ))
+  
+  # sample the donors at the given read fraction for each donor
+  i_Donor_1_selected_ps <- subset_samples(Donors_selected_ps, Strain_1 %in% i_Donor_1)
+  i_Donor_2_selected_ps <- subset_samples(Donors_selected_ps, Strain_1 %in% i_Donor_2)
+
+  i_Individual_1 <- i_Donor_1_selected_ps@sam_data$Individual_1
+  i_Individual_2 <- i_Donor_2_selected_ps@sam_data$Individual_1
+  i_Individuals <- unique(c(i_Individual_1, i_Individual_2))
+  
+  i_Strains <- unique(c(i_Donor_1, i_Donor_2))
+
+  # Unmerged Donors
+  i_Donors_unmerged_ps <- subset_samples(Donors_unmerged_ps, Individual_1 %in% i_Individuals)
+  sample_names(i_Donors_unmerged_ps) <- i_Donors_unmerged_ps@sam_data$Strain_1
+
+  i_Donors_unmerged_Seq_Depth <- min(sample_sums(i_Donors_unmerged_ps))
+
+  i_Donor_1_unmerged_Sample_Depth <- ceiling(i_Donors_unmerged_Seq_Depth * i_Donor_1_Fraction)
+  i_Donor_2_unmerged_Sample_Depth <- i_Donors_unmerged_Seq_Depth - i_Donor_1_unmerged_Sample_Depth
+
+  i_Donor_1_unmerged_ps <- subset_samples(Donors_unmerged_ps, Individual_1 %in% i_Individual_1)
+  i_Donor_1_unmerged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_1_unmerged_ps, 
+                          sample.size = i_Donor_1_unmerged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_1_unmerged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_unmerged")
+  
+  i_Donor_2_unmerged_ps <- subset_samples(Donors_unmerged_ps, Individual_2 %in% i_Individual_2)
+  i_Donor_2_unmerged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_2_unmerged_ps, 
+                          sample.size = i_Donor_2_unmerged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_2_unmerged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_unmerged")
+
+  i_Donors_unmerged_out_ps <- suppressMessages(merge_phyloseq(i_Donor_1_unmerged_ps, i_Donor_2_unmerged_ps))
+  i_Donors_unmerged_out_ps <- suppressWarnings(merge_samples(i_Donors_unmerged_out_ps, "Strain_Comparison"))
+  sample_names(i_ps) <- paste0(i_new_name, "_unmerged")
+  sample_data(i_Donors_unmerged_out_ps) <- sample_data(i_ps)
+
+  Exp_2_Samples_ps <- merge_phyloseq(Exp_2_Samples_ps, i_Donors_unmerged_out_ps)
+  
+  # Merged Donors
+  i_Donors_merged_ps <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) %in% i_Strains)
+  i_Donors_merged_Seq_Depth <- min(sample_sums(i_Donors_merged_ps))
+  
+  i_Donor_1_merged_Sample_Depth <- ceiling(i_Donors_merged_Seq_Depth * i_Donor_1_Fraction)
+  i_Donor_2_merged_Sample_Depth <- i_Donors_merged_Seq_Depth - i_Donor_1_merged_Sample_Depth
+
+  i_Donor_1_merged_ps <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) %in% i_Donor_1)
+  i_Donor_1_merged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_1_merged_ps, 
+                          sample.size = i_Donor_1_merged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_1_merged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_merged")
+  
+  i_Donor_2_merged_ps <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) %in% i_Donor_2)
+  i_Donor_2_merged_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_2_merged_ps, 
+                          sample.size = i_Donor_2_merged_Sample_Depth, 
+                          rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Donor_2_merged_ps@sam_data$Strain_Comparison <- paste0(i_new_name, "_merged")
+
+  i_Donors_merged_out_ps <- suppressMessages(merge_phyloseq(i_Donor_1_merged_ps, i_Donor_2_merged_ps))
+  i_Donors_merged_out_ps <- suppressWarnings(merge_samples(i_Donors_merged_out_ps, "Strain_Comparison"))
+  sample_names(i_ps) <- paste0(i_new_name, "_merged")
+  sample_data(i_Donors_merged_out_ps) <- sample_data(i_ps)
+
+  Exp_2_Samples_ps <- merge_phyloseq(Exp_2_Samples_ps, i_Donors_merged_out_ps)
+
+  }
+
+Exp_2_Samples_ps@sam_data$Sample_Type[grep("Simulated_Inocula", sample_names(Exp_2_Samples_ps))] <- "Simulated_Inocula"
+Exp_2_Samples_ps@sam_data$Week[grep("Simulated_Inocula", sample_names(Exp_2_Samples_ps))] <- 0
+
+```
+
+
+```{r Exp 2 - Calculate Local Adaptation Index Table}
+
+# Experiment 2 - Calculate LAI
+ps <- Exp_2_Samples_ps
+ps@sam_data$Sample_ID_2 <- ps@sam_data$Sample_ID
+ps@sam_data$Sample_ID <- sample_names(ps)
+
+# pull sample data from recipient samples and add places to accept results
+sample_data(ps) <- cbind(sample_data(ps), estimate_richness(ps), evenness(ps, index = "all"))
+sd <- data.frame(sample_data(ps))
+Sample_ID_list <- sample_names(ps)
+
+# List of data to record
+dist_list <- c("Jaccard", "Overlap", "Bray", "JSD", "Sorensen")
+x <- paste0("Distance_To_Donor_", rep(c(1, 2), each = length(dist_list)), "_", dist_list)
+x0 <- paste0("Distance_Between_Donors_", dist_list)
+y <- paste0("Difference_", dist_list)
+y0 <- paste0("Log_Ratio_", dist_list)
+y1 <- c("Donor_2_Richness","Donor_1_Shannon", "Donor_2_Shannon", "Donor_1_Evenness", "Donor_2_Evenness")
+y2 <- c("N_Donor_1_In_Sample", "N_Donor_1_Not_In_Sample",
+        "N_Donor_1_Exclusive_In_Sample", "N_Donor_1_Exclusive_Not_In_Sample",
+        "N_Donor_2_In_Sample", "N_Donor_2_Not_In_Sample",
+        "N_Donor_2_Exclusive_In_Sample", "N_Donor_2_Exclusive_Not_In_Sample",
+        "N_Shared_In_Sample", "N_Unknown_In_Sample")
+z <- c(x, x0, y, y0, "Mmus_Count", "Seq_Depth", "ASV_Richness", "Taxa_Level_Richness", "Donor_1_Richness", y1, y2)
+
+df <- data.frame(matrix(nrow = nsamples(ps), ncol = length(z))) 
+colnames(df) <- z
+sd <- cbind(sd, df)
+sd <- data.frame(sd)
+sd$Taxa_Set <- "All_Taxa"
+
+# # replacate for each taxnomic level
+# Tax_Level <- "Genus"
+# tt <- data.frame(tax_table(ps)@.Data)
+# taxa_level_list <- c("All_Taxa", unique(tt[, Tax_Level]))
+# taxa_level_list <- taxa_level_list[!is.na(taxa_level_list)]
+# nc <- max(nchar(taxa_level_list)) + 5
+# 
+# sd <- do.call("rbind", replicate(length(taxa_level_list), sd, simplify = FALSE))
+# sd$Taxa_Set <- rep(taxa_level_list,  each = nsamples(ps))
+# 
+# length(Sample_ID_list)
+# dim(sd)
+
+# fix sample names
+sample_names(Donors_unmerged_ps) <- Donors_unmerged_ps@sam_data$Individual_1
+
+merged_sd <- sd
+Donors_selected_sd <- data.frame(sample_data(Donors_selected_ps))
+
+# for loop that finds dist to both donors for each sample
+for (i in seq_along(Sample_ID_list)) {
+  
+  print(paste0( " |||||||  ", percent(i / length(Sample_ID_list)), " Complete", "  ||||||| "))
+
+  # subset dataset
+  i_Sample_ID <- Sample_ID_list[i]
+  print(paste0("Analyzing Sample: ", i_Sample_ID))
+  i_ps <- subset_samples(ps, sample_names(ps) == i_Sample_ID)
+  
+  # identify donors
+  i_Strain_1 <- sd$Strain_1[i]
+  i_Strain_2 <- sd$Strain_2[i]
+  
+  i_Individual_1 <- Donors_selected_sd$Individual_1[Donors_selected_sd$Strain_1 == i_Strain_1]
+  i_Individual_2 <- Donors_selected_sd$Individual_1[Donors_selected_sd$Strain_1 == i_Strain_2]
+
+  print(paste0( "       Donor 1: ", i_Strain_1, " (",i_Individual_1,")  |   Donor 2: ", i_Strain_2, " (", i_Individual_2, ")"))
+
+  # # # # # USE MERGED SAMPLES AS THE DONORS # # # #
+    
+  # Count how many Mus musculus strains are included in this comparison
+  merged_sd[i, "Mmus_Count"] <- sum(grepl("Mmus", c(i_Strain_1, i_Strain_2)))
+
+  i_row <- which(merged_sd$Sample_ID == i_Sample_ID & merged_sd$Taxa_Set == "All_Taxa")
+  
+  # Calculate Alpha Diversity
+  i_Strain_1_ps  <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) == i_Strain_1)
+  i_Donor_1_Richness <- as.numeric(estimate_richness(i_Strain_1_ps, measures = c("Observed")))
+  i_Donor_1_Shannon <- as.numeric(estimate_richness(i_Strain_1_ps, measures = c("Shannon")))
+  i_Donor_1_Evenness <- as.numeric(evenness(i_Strain_1_ps, index = "pielou"))
+  
+  i_Strain_2_ps  <- subset_samples(Donors_merged_ps, sample_names(Donors_merged_ps) == i_Strain_2)
+  i_Donor_2_Richness <- as.numeric(estimate_richness(i_Strain_2_ps, measures = c("Observed")))
+  i_Donor_2_Shannon <- as.numeric(estimate_richness(i_Strain_2_ps, measures = c("Shannon")))
+  i_Donor_2_Evenness <- as.numeric(evenness(i_Strain_2_ps, index = "pielou"))
+
+  merged_sd[i_row, "Donor_1_Richness"] <- i_Donor_1_Richness
+  merged_sd[i_row, "Donor_1_Shannon"] <- i_Donor_1_Shannon
+  merged_sd[i_row, "Donor_1_Evenness"] <- i_Donor_1_Evenness
+  merged_sd[i_row, "Donor_2_Richness"] <- i_Donor_2_Richness
+  merged_sd[i_row, "Donor_2_Shannon"] <- i_Donor_2_Shannon
+  merged_sd[i_row, "Donor_2_Evenness"] <- i_Donor_2_Evenness
+  
+  # y2
+  i_Sample_Taxa <- taxa_names(prune_taxa(taxa_sums(i_ps) > 0, i_ps))
+  i_Donor_1_Taxa <- taxa_names(prune_taxa(taxa_sums(i_Strain_1_ps) > 0, i_Strain_1_ps))
+  i_Donor_2_Taxa <- taxa_names(prune_taxa(taxa_sums(i_Strain_2_ps) > 0, i_Strain_2_ps))
+  i_Donor_Shared_Taxa <- i_Donor_1_Taxa[i_Donor_1_Taxa %in% i_Donor_2_Taxa]
+  i_Donor_1_Exclusive_Taxa <- i_Donor_1_Taxa[!i_Donor_1_Taxa %in% i_Donor_2_Taxa]
+  i_Donor_2_Exclusive_Taxa <- i_Donor_2_Taxa[!i_Donor_2_Taxa %in% i_Donor_1_Taxa]
+
+  N_Donor_1_In_Sample <- i_Donor_1_Taxa[i_Donor_1_Taxa %in% i_Sample_Taxa]
+  N_Donor_1_Not_In_Sample <- i_Donor_1_Taxa[!i_Donor_1_Taxa %in% i_Sample_Taxa]
+
+  N_Donor_1_Exclusive_In_Sample <- i_Donor_1_Exclusive_Taxa[i_Donor_1_Exclusive_Taxa %in% i_Sample_Taxa]
+  N_Donor_1_Exclusive_Not_In_Sample <- i_Donor_1_Exclusive_Taxa[!i_Donor_1_Exclusive_Taxa %in% i_Sample_Taxa]
+
+  N_Donor_2_In_Sample <- i_Donor_2_Taxa[i_Donor_2_Taxa %in% i_Sample_Taxa]
+  N_Donor_2_Not_In_Sample <- i_Donor_2_Taxa[!i_Donor_2_Taxa %in% i_Sample_Taxa]
+
+  N_Donor_2_Exclusive_In_Sample <- i_Donor_2_Exclusive_Taxa[i_Donor_2_Exclusive_Taxa %in% i_Sample_Taxa]
+  N_Donor_2_Exclusive_Not_In_Sample <- i_Donor_2_Exclusive_Taxa[!i_Donor_2_Exclusive_Taxa %in% i_Sample_Taxa]
+
+  N_Shared_In_Sample <- i_Donor_Shared_Taxa[i_Donor_Shared_Taxa %in% i_Sample_Taxa]
+  N_Unknown_In_Sample <- i_Sample_Taxa[!i_Sample_Taxa %in% unique(i_Donor_1_Taxa, i_Donor_2_Taxa)]
+  
+  merged_sd[i_row, "N_Donor_1_In_Sample"] <- length(N_Donor_1_In_Sample)
+  merged_sd[i_row, "N_Donor_1_Not_In_Sample"] <- length(N_Donor_1_Not_In_Sample)
+  merged_sd[i_row, "N_Donor_1_Exclusive_In_Sample"] <- length(N_Donor_1_Exclusive_In_Sample)
+  merged_sd[i_row, "N_Donor_1_Exclusive_Not_In_Sample"] <- length(N_Donor_1_Exclusive_Not_In_Sample)
+
+  merged_sd[i_row, "N_Donor_2_In_Sample"] <- length(N_Donor_2_In_Sample)
+  merged_sd[i_row, "N_Donor_2_Not_In_Sample"] <- length(N_Donor_2_Not_In_Sample)
+  merged_sd[i_row, "N_Donor_2_Exclusive_In_Sample"] <- length(N_Donor_2_Exclusive_In_Sample)
+  merged_sd[i_row, "N_Donor_2_Exclusive_Not_In_Sample"] <- length(N_Donor_2_Exclusive_Not_In_Sample)
+
+  merged_sd[i_row, "N_Shared_In_Sample"] <- length(N_Shared_In_Sample)
+  merged_sd[i_row, "N_Unknown_In_Sample"] <- length(N_Unknown_In_Sample)
+
+
+  # Calculate Similarity to Donors
+
+  i_Merged_ps <- merge_phyloseq(i_ps, i_Strain_1_ps, i_Strain_2_ps)
+  i_Merged_merged_ps <- i_Merged_ps
+  i_Seq_Depth <- min(sample_sums(i_Merged_ps))
+  merged_sd[i_row, "Seq_Depth"] <- i_Seq_Depth
+  i_Normalized_ps <- suppressMessages(rarefy_even_depth(i_Merged_ps, sample.size = i_Seq_Depth, rngseed = 8675309, replace = FALSE, trimOTUs = FALSE))
+  i_Normalized_merged_ps <- i_Normalized_ps
+  i_Normalized_Rich_ps <- suppressMessages(rarefy_even_depth(i_Merged_ps, sample.size = i_Seq_Depth, rngseed = 8675309, replace = FALSE, trimOTUs = TRUE))
+  merged_sd[i_row, "ASV_Richness"] <- ntaxa(i_Normalized_Rich_ps)
+
+  print(paste0( "Merged       All Taxa       Seq_Depth: ", prettyNum(i_Seq_Depth, big.mark = ","), " reads per sample. Total Richness: ", ntaxa(i_Normalized_Rich_ps), " ASVs"))
+
+  # Jaccard
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "jaccard", binary = TRUE))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_Jaccard"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Jaccard"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Jaccard"] <- i_dist_donors
+  merged_sd[i_row, "Difference_Jaccard"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_Jaccard"] <- log2(i_dist_1 / i_dist_2)
+
+  # Overlap 
+  merged_sd[i_row, "Distance_To_Donor_1_Overlap"] <- 1 - i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Overlap"] <- 1 - i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Overlap"] <- 1 - i_dist_donors
+  merged_sd[i_row, "Difference_Overlap"] <- (1 - i_dist_1) - (1 - i_dist_2)
+  merged_sd[i_row, "Log_Ratio_Overlap"] <- log2((1 - i_dist_1) / (1 - i_dist_2))
+
+  # Bray
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "bray"))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_Bray"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Bray"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Bray"] <- i_dist_donors
+  merged_sd[i_row, "Difference_Bray"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_Bray"] <- log2(i_dist_1 / i_dist_2)
+
+  # Jensen-Shannon Divergence 
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "jsd"))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_JSD"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_JSD"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_JSD"] <- i_dist_donors
+  merged_sd[i_row, "Difference_JSD"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_JSD"] <- log2(i_dist_1 / i_dist_2)
+
+  # Sørensen dissimilarity 
+  i_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(i_Normalized_ps, method = "sor", binary = TRUE))))
+  i_dist_1 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_1), "value"]
+  i_dist_2 <- i_df[which(i_df$Var1 == i_Sample_ID & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_donors <- i_df[which(i_df$Var1 == i_Strain_1 & i_df$Var2 == i_Strain_2), "value"]
+  i_dist_diff <- i_dist_1 - i_dist_2
+
+  merged_sd[i_row, "Distance_To_Donor_1_Sorensen"] <- i_dist_1
+  merged_sd[i_row, "Distance_To_Donor_2_Sorensen"] <- i_dist_2
+  merged_sd[i_row, "Distance_Between_Donors_Sorensen"] <- i_dist_donors
+  merged_sd[i_row, "Difference_Sorensen"] <- i_dist_diff
+  merged_sd[i_row, "Log_Ratio_Sorensen"] <- log2(i_dist_1 / i_dist_2)
+
+  # # identify Tax_Levels that are present in the sample and both donors
+  # i_glom_ps <- tax_glom(i_Merged_ps, Tax_Level)
+  # taxa_names(i_glom_ps) <- data.frame(tax_table(i_glom_ps))[, Tax_Level]
+  # i_glom_df <- data.frame(t(otu_table(i_glom_ps)@.Data))
+  # i_glom_df[i_glom_df > 0] <- 1 # convert to presence/absence
+  # if (merged_sd[i,"Strain_1"] == merged_sd[i,"Strain_2"]) {
+  #   i_taxa <- rownames(i_glom_df)[rowSums(i_glom_df) == 2]
+  # } else {
+  #   i_taxa <- rownames(i_glom_df)[rowSums(i_glom_df) == 3]
+  # }
+  # merged_sd[i_row, "Taxa_Level_Richness"] <- length(i_taxa)
+  # print(paste0( "    There are ", length(i_taxa), " different ", Tax_Level, " groups observed in the fecal output sample and both donors."))
+
+  # # loop through all of those Tax_Level groups and re-calculate the similarity values
+  #   for (j in seq_along(i_taxa)) {
+  #   j_taxa_level <- i_taxa[j]
+  # 
+  #   # subset to the taxonomic level in "j", calculate min depth and richness
+  #   if (Tax_Level != "Genus") {print("Known Bug: edit hard-coded `Tax_Level` below this message.")} # AKA known hack
+  #   j_ps <- suppressWarnings(subset_taxa(i_Merged_ps, Genus == j_taxa_level))
+  #   j_ps <- prune_taxa(taxa_sums(j_ps) > 0, j_ps)
+  # 
+  #   j_row <- which(merged_sd$Sample_ID == i_Sample_ID & merged_sd$Taxa_Set == j_taxa_level)
+  # 
+  #   j_Seq_Depth <- min(sample_sums(j_ps))
+  #   merged_sd[j_row, "Seq_Depth"] <- j_Seq_Depth
+  # 
+  #   j_Richness <- ntaxa(j_ps)
+  #   merged_sd[j_row, "ASV_Richness"] <- j_Richness
+  #   merged_sd[j_row, "Taxa_Level_Richness"] <- length(i_taxa) # doesn't really apply here, but repeat from above
+  #   merged_sd[j_row, "Mmus_Count"] <- sum(grepl("Mmus", c(i_Strain_1, i_Strain_2)))
+  # 
+  #   nc0 <- nc - nchar(j_taxa_level)
+  #   print(paste0(cat(rep(" ", nc0), sep = ""), j_taxa_level ,  " Seq_Depth: ", prettyNum(j_Seq_Depth, big.mark = ","), " reads per sample. Total Richness: ", j_Richness, " ASVs"))
+  # 
+  #   # Jaccard
+  #   j_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(j_ps, method = "jaccard", binary = TRUE))))
+  #   j_dist_1 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_1), "value"]
+  #   j_dist_2 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_donors <- j_df[which(j_df$Var1 == i_Strain_1 & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_diff <- j_dist_1 - j_dist_2
+  # 
+  #   merged_sd[j_row, "Distance_To_Donor_1_Jaccard"] <- j_dist_1
+  #   merged_sd[j_row, "Distance_To_Donor_2_Jaccard"] <- j_dist_2
+  #   merged_sd[j_row, "Distance_Between_Donors_Jaccard"] <- j_dist_donors
+  #   merged_sd[j_row, "Difference_Jaccard"] <- j_dist_diff
+  #   merged_sd[j_row, "Log_Ratio_Jaccard"] <- log2(j_dist_1 / j_dist_2)
+  # 
+  #   # Overlap
+  #   merged_sd[j_row, "Distance_To_Donor_1_Overlap"] <- 1 - j_dist_1
+  #   merged_sd[j_row, "Distance_To_Donor_2_Overlap"] <- 1 - j_dist_2
+  #   merged_sd[j_row, "Distance_Between_Donors_Overlap"] <- 1 - j_dist_donors
+  #   merged_sd[j_row, "Difference_Overlap"] <- 1 - j_dist_diff
+  #   merged_sd[j_row, "Log_Ratio_Overlap"] <- log2((1 - j_dist_1) / (1 - j_dist_2))
+  # 
+  #   # Bray
+  #   j_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(j_ps, method = "bray"))))
+  #   j_dist_1 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_1), "value"]
+  #   j_dist_2 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_donors <- j_df[which(j_df$Var1 == i_Strain_1 & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_diff <- j_dist_1 - j_dist_2
+  # 
+  #   merged_sd[j_row, "Distance_To_Donor_1_Bray"] <- j_dist_1
+  #   merged_sd[j_row, "Distance_To_Donor_2_Bray"] <- j_dist_2
+  #   merged_sd[j_row, "Distance_Between_Donors_Bray"] <- j_dist_donors
+  #   merged_sd[j_row, "Difference_Bray"] <- j_dist_diff
+  #   merged_sd[j_row, "Log_Ratio_Bray"] <- log2(j_dist_1 / j_dist_2)
+  # 
+  #   # Jensen-Shannon Divergence
+  #   j_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(j_ps, method = "jsd"))))
+  #   j_dist_1 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_1), "value"]
+  #   j_dist_2 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_donors <- j_df[which(j_df$Var1 == i_Strain_1 & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_diff <- j_dist_1 - j_dist_2
+  # 
+  #   merged_sd[j_row, "Distance_To_Donor_1_JSD"] <- j_dist_1
+  #   merged_sd[j_row, "Distance_To_Donor_2_JSD"] <- j_dist_2
+  #   merged_sd[j_row, "Distance_Between_Donors_JSD"] <- j_dist_donors
+  #   merged_sd[j_row, "Difference_JSD"] <- j_dist_diff
+  #   merged_sd[j_row, "Log_Ratio_JSD"] <- log2(j_dist_1 / j_dist_2)
+  # 
+  #   # Sørensen dissimilarity
+  #   j_df <- melt(as.matrix(suppressWarnings(phyloseq::distance(j_ps, method = "sor", binary = TRUE))))
+  #   j_dist_1 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_1), "value"]
+  #   j_dist_2 <- j_df[which(j_df$Var1 == i_Sample_ID & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_donors <- j_df[which(j_df$Var1 == i_Strain_1 & j_df$Var2 == i_Strain_2), "value"]
+  #   j_dist_diff <- j_dist_1 - j_dist_2
+  # 
+  #   merged_sd[j_row, "Distance_To_Donor_1_Sorensen"] <- j_dist_1
+  #   merged_sd[j_row, "Distance_To_Donor_2_Sorensen"] <- j_dist_2
+  #   merged_sd[j_row, "Distance_Between_Donors_Sorensen"] <- j_dist_donors
+  #   merged_sd[j_row, "Difference_Sorensen"] <- j_dist_diff
+  #   merged_sd[j_row, "Log_Ratio_Sorensen"] <- log2(j_dist_1 / j_dist_2)
+  # 
+  #   }
+}
+
+# remove empty rows
+Exp_2_LAI_Table_merged_df <- merged_sd[!is.na(merged_sd$Difference_Overlap),]
+dim(Exp_2_LAI_Table_merged_df)
+# sort(table(Exp_2_LAI_Table_merged_df$Taxa_Set))
+
+
+#df <- data.frame("unmerged" = Exp_2_LAI_Table_unmerged_df$Difference_Overlap, 
+#                 "merged" = Exp_2_LAI_Table_merged_df$Difference_Overlap)
+#ggplot(df, aes(x = unmerged, y = merged)) + geom_point()
+
+
+
+# Write out table as a text file
+#write.table(Exp_2_LAI_Table_unmerged_df, file.path(Save_fp_dt, "Exp_2_Full2_LAI_Table_unmerged_df.txt"), sep = "\t", quote = FALSE, row.names = FALSE)
+# Save R data object
+#saveRDS(Exp_2_LAI_Table_unmerged_df, file.path(Save_fp_dt, "Exp_2_Full_LAI2_Table_unmerged_df.rds"))
+
+# Write out table as a text file
+write.table(Exp_2_LAI_Table_merged_df, file.path(Save_fp, "Exp_2_LAI_Table_merged_df.txt"), sep = "\t", quote = FALSE, row.names = FALSE)
+# Save R data object
+saveRDS(Exp_2_LAI_Table_merged_df, file.path(Save_fp, "Exp_2_LAI_Table_merged_df.rds"))
+
+```
+
+# Fig. 2C –  Exp 2 - Local Adaptation Index - Week 4
+
+```{r Fig 2C}
+
+df <- Exp_2_LAI_Table_merged_df
+df <- df[df$Taxa_Set == "All_Taxa",]
+dim(df)
+
+df <- df[df$Week == 4,]
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+stat_df <- df %>%
+  group_by(Recipient_Genotype, Strain_Comparison) %>%
+  wilcox_test(Difference_Overlap ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Strain_Comparison")
+stat_df
+
+y_var <- max(abs(df$Difference_Overlap)) + 0.2
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+
+Time_Point_facets <- paste("Week", c(4, 6))
+names(Time_Point_facets) <- unique(df$Time_Point)
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Strain_Comparison, y = Difference_Overlap), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Strain_Comparison, y = Difference_Overlap, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Recipient_Genotype, 
+                    labeller = labeller(
+                      Recipient_Genotype = Recipient_Genotype_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"#,
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("FL1\n+\nPAH", "NY4\n+\nPMAN"))
+p <- p + xlab("Inocula Mixture")
+p <- p + ylab("Local Adaptation Index")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- paste0("Figure_2C")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 4, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. 2D  – Exp 2 - Observed LAI - Expected LAI - Week 4
+
+```{r Fig 2D}
+
+df <- Exp_2_LAI_Table_merged_df
+df <- df[df$Taxa_Set == "All_Taxa",]
+
+# partition out Simulated Inocula samples that use a merged or not merged Inocula
+Inocula_merged_df <- df[grep("Simulated_Inocula_merged", rownames(df)),] # merged Donors
+
+df <- df[!grepl("Simulated_Inocula", rownames(df)),] 
+dim(df)
+df <- df[df$Week == 4,]
+dim(df)
+
+# Subtract the LAI of the inocula samples, either merged or unmerged
+df$Inocula_LAI_merged <- Inocula_merged_df$Difference_Overlap[match(df$Strain_Comparison,
+                                                                        Inocula_merged_df$Strain_Comparison)]
+df$Difference_Overlap_Inocula_LAI_merged <- df$Difference_Overlap - df$Inocula_LAI_merged
+
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+stat_df <- df %>%
+  group_by(Recipient_Genotype, Strain_Comparison) %>%
+  wilcox_test(Difference_Overlap_Inocula_LAI_merged ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Strain_Comparison")
+stat_df
+
+y_var <- max(abs(df$Difference_Overlap_Inocula_LAI_merged)) + 0.2
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Strain_Comparison, y = Difference_Overlap_Inocula_LAI_merged), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Strain_Comparison, y = Difference_Overlap_Inocula_LAI_merged, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Recipient_Genotype, 
+                    labeller = labeller(
+                      Recipient_Genotype = Recipient_Genotype_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("FL1\n+\nPAH", "NY4\n+\nPMAN"))
+p <- p + xlab("Inocula Mixture")
+p <- p + ylab("Observed LAI - Expected LAI")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- paste0("Figure_2D")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 4, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. 2E – Exp 2 - SourceTracker - Week 4
+
+```{r Fig 2E}
+
+df <- SourceTracker_df
+
+df <- df[df$Sequencing_Run == "Seq_Run_2", ]
+df <- df[df$Sample_Type == "Feces_Output", ]
+
+comparisons_to_keep <- c("Mmus_vs_Mpah", "Mmus_vs_Pman")
+df <- df[df$Species_Comparison %in% comparisons_to_keep, ]
+df$Species_Comparison <- factor(df$Species_Comparison, levels = comparisons_to_keep)
+
+df <- df[df$Week == 4,]
+
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+stat_df <- df %>%
+  group_by(Recipient_Genotype, Strain_Comparison) %>%
+  wilcox_test(log10_Donor_Ratio ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Strain_Comparison")
+stat_df
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+
+y_var <- max(abs(df$log10_Donor_Ratio)) + 1
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Strain_Comparison, y = log10_Donor_Ratio), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Strain_Comparison, y = log10_Donor_Ratio, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Recipient_Genotype, 
+                    labeller = labeller(
+                      Recipient_Genotype = Recipient_Genotype_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"#,
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("FL1\n+\nPAH", "NY4\n+\nPMAN"))
+p <- p + xlab("Inocula Mixture")
+p <- p + ylab("SourceTracker ratio")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- paste0("Figure_2E")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+
+```
+
+# Fig. S6 – Exp 2 - Shannon Diversity Index
+
+
+```{r Fig S6}
+
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+comparisons_to_keep <- c("Mmus_vs_Mpah", "Mmus_vs_Pman")
+ps <- subset_samples(ps, Species_Comparison %in%  comparisons_to_keep)
+ps <- subset_samples(ps, Week == 6)
+
+ps <- rarefy_even_depth(ps, sample.size = 10000, rngseed = 8675309) 
+
+sample_data(ps) <- cbind(sample_data(ps), estimate_richness(ps, measures = c("Shannon")))
+df <- data.frame(sample_data(ps))
+
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+df$Strain_Comparison <- factor(df$Strain_Comparison, levels = c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman"))
+
+stat_df <- df %>%
+  group_by(Strain_Comparison) %>%
+  wilcox_test(Shannon ~ Recipient_Genotype, p.adjust.method = "fdr")  %>%
+  add_significance("p") %>% 
+  add_xy_position(x = "Recipient_Genotype")
+stat_df
+
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+Strain_Comparison_facets <- c("FL1 + PAH",  "NY4 + PMAN")
+names(Strain_Comparison_facets) <- c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")
+
+ylim_var <- max(df$Shannon) + (0.05 * max(df$Shannon))
+
+p <- ggplot(df)
+p <- p + geom_boxplot(aes(x = Recipient_Genotype, y = Shannon), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Recipient_Genotype, y = Shannon, fill = Strain_2, shape  = Strain_1), 
+                    color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Strain_Comparison, 
+                    labeller = labeller(
+                      Strain_Comparison = Strain_Comparison_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"#,
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("WT", "Rag1 -/-"))
+p <- p + xlab("Genotype")
+p <- p + ylab("Shannon Diversity Index")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + ylim(NA, ylim_var)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_S6"
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+```
+
+
+
+# Fig. S7A –  Exp 2 - Local Adaptation Index - Week 6
+
+```{r Fig S7A}
+
+df <- Exp_2_LAI_Table_merged_df
+df <- df[df$Taxa_Set == "All_Taxa",]
+dim(df)
+
+df <- df[df$Week == 6,]
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+stat_df <- df %>%
+  group_by(Recipient_Genotype, Strain_Comparison) %>%
+  wilcox_test(Difference_Overlap ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Strain_Comparison")
+stat_df
+
+y_var <- max(abs(df$Difference_Overlap)) + 0.2
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+
+Time_Point_facets <- paste("Week", c(4, 6))
+names(Time_Point_facets) <- unique(df$Time_Point)
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Strain_Comparison, y = Difference_Overlap), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Strain_Comparison, y = Difference_Overlap, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Recipient_Genotype, 
+                    labeller = labeller(
+                      Recipient_Genotype = Recipient_Genotype_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"#,
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("FL1\n+\nPAH", "NY4\n+\nPMAN"))
+p <- p + xlab("Inocula Mixture")
+p <- p + ylab("Local Adaptation Index")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- paste0("Figure_S7A")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 4, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. S7B  – Exp 2 - Observed LAI - Expected LAI - Week 6
+
+```{r Fig S7B}
+
+df <- Exp_2_LAI_Table_merged_df
+df <- df[df$Taxa_Set == "All_Taxa",]
+
+# partition out Simulated Inocula samples that use a merged or not merged Inocula
+Inocula_merged_df <- df[grep("Simulated_Inocula_merged", rownames(df)),] # merged Donors
+
+df <- df[!grepl("Simulated_Inocula", rownames(df)),] 
+dim(df)
+df <- df[df$Week == 6,]
+dim(df)
+
+# Subtract the LAI of the inocula samples, either merged or unmerged
+df$Inocula_LAI_merged <- Inocula_merged_df$Difference_Overlap[match(df$Strain_Comparison,
+                                                                        Inocula_merged_df$Strain_Comparison)]
+df$Difference_Overlap_Inocula_LAI_merged <- df$Difference_Overlap - df$Inocula_LAI_merged
+
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+stat_df <- df %>%
+  group_by(Recipient_Genotype, Strain_Comparison) %>%
+  wilcox_test(Difference_Overlap_Inocula_LAI_merged ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Strain_Comparison")
+stat_df
+
+y_var <- max(abs(df$Difference_Overlap_Inocula_LAI_merged)) + 0.2
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Strain_Comparison, y = Difference_Overlap_Inocula_LAI_merged), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Strain_Comparison, y = Difference_Overlap_Inocula_LAI_merged, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Recipient_Genotype, 
+                    labeller = labeller(
+                      Recipient_Genotype = Recipient_Genotype_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("FL1\n+\nPAH", "NY4\n+\nPMAN"))
+p <- p + xlab("Inocula Mixture")
+p <- p + ylab("Observed LAI - Expected LAI")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- paste0("Figure_S7B")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 4, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. S7C – Exp 2 - SourceTracker - Week 6
+
+```{r Fig S7C}
+
+df <- SourceTracker_df
+
+df <- df[df$Sequencing_Run == "Seq_Run_2", ]
+df <- df[df$Sample_Type == "Feces_Output", ]
+
+comparisons_to_keep <- c("Mmus_vs_Mpah", "Mmus_vs_Pman")
+df <- df[df$Species_Comparison %in% comparisons_to_keep, ]
+df$Species_Comparison <- factor(df$Species_Comparison, levels = comparisons_to_keep)
+
+df <- df[df$Week == 6,]
+
+df$Recipient_Genotype <- factor(df$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+stat_df <- df %>%
+  group_by(Recipient_Genotype, Strain_Comparison) %>%
+  wilcox_test(log10_Donor_Ratio ~ 1, mu = 0, p.adjust.method = "fdr")  %>%
+  add_significance("p")
+stat_df <- stat_df %>% add_xy_position(x = "Strain_Comparison")
+stat_df
+
+Recipient_Genotype_facets <- c("Wildtype",  "Rag1 -/-")
+names(Recipient_Genotype_facets) <- c("WT", "Rag1")
+
+y_var <- max(abs(df$log10_Donor_Ratio)) + 1
+
+p <- ggplot(df)
+p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Strain_Comparison, y = log10_Donor_Ratio), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Strain_Comparison, y = log10_Donor_Ratio, fill = Strain_2, shape  = Strain_1), color = "black", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + facet_grid( ~ Recipient_Genotype, 
+                    labeller = labeller(
+                      Recipient_Genotype = Recipient_Genotype_facets
+                      ))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(axis.text.x = element_text(size = 7))
+p <- p + scale_shape_manual(name = "Native Strain", values = c("Mmus_FL1" = 21, "Mmus_NY4" =  23), 
+             labels = c(
+             "FL1",
+             "NY4"#,
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + scale_fill_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Non-Native Strain", values = Strain_color_pal[c(8:9)], 
+             labels = c(
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_x_discrete(labels = c("FL1\n+\nPAH", "NY4\n+\nPMAN"))
+p <- p + xlab("Inocula Mixture")
+p <- p + ylab("SourceTracker ratio")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + ylim(-y_var, y_var)
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + guides(shape = guide_legend(order = 1), col = guide_legend(order = 2), fill = guide_legend(override.aes = list(shape = 21), order = 2))
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+
+file_name <- paste0("Figure_S7C")
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 4, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+
+```
+
+# Fig. S8B – similarity to donors, single inoculation experiments 
+
+```{r Fig S8B}
+
+ps <- CU01_ps
+
+# subset to the first sequecing run
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_1"))
+
+Donor_ps <- subset_samples(ps, Sample_Type %in% c("Donor"))
+Donor_ps <- suppressWarnings(merge_samples(Donor_ps, "Strain_1"))
+Donor_ps@sam_data$Strain_1 <- sample_names(Donor_ps)
+Donor_ps@sam_data$Mouse_ID <- paste0(sample_names(Donor_ps), "_Donor")
+Donor_ps@sam_data$Sample_Type <- "Donor"
+Donor_ps@sam_data$Time_Point <- "w0"
+Donor_ps@sam_data$Week <- 0
+
+# subset to fecal outputs of mono-colonization experiment and donors
+samples_to_keep <- sort(sample_names(ps)[which(ps@sam_data$Strain_1 == ps@sam_data$Strain_2)])
+samples_to_keep <- samples_to_keep[!grepl("Inoculum|Donor", samples_to_keep)]
+ps <- subset_samples(ps, Sample_ID %in% samples_to_keep)
+
+ps <- merge_phyloseq(ps, Donor_ps)
+
+# normalize for sequencing depth
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+
+jaccard_mat <- as.matrix(phyloseq::distance(ps, method = "jaccard", normalized = TRUE, binary = TRUE))
+bray_mat <- as.matrix(phyloseq::distance(ps, method = "jaccard", normalized = TRUE))
+
+dist_df <- make_distance_df(ps, variables = c("Strain_1",  "Mouse_ID", "Sample_Type", "Time_Point",  "Week"), distances = c("jaccard", "bray"))
+dist_df$Overlap <- 1 - dist_df$jaccard
+
+# First subset to the donor samples
+df <- dist_df
+df <- df[df$same_Strain_1 == "yes",]
+df <- df[df$same_Sample_Type == "no",]
+dim(df)
+df <- df[order(df$s2_Mouse_ID, df$s2_Week),]
+
+df$Donor_Type <- NA
+df$Donor_Type[df$s1_Strain_1 %in% names(Strain_color_pal[c(1:3)])] <- "Native"
+df$Donor_Type[df$s1_Strain_1 %in% names(Strain_color_pal[c(6:9)])] <- "Non-Native"
+table(df$Donor_Type)
+
+stat_df <- df %>%
+  group_by(s1_Week) %>%
+  wilcox_test(Overlap ~ Donor_Type, p.adjust.method = "fdr")  %>%
+  add_significance("p") %>% 
+  add_xy_position(x = "s1_Week")
+stat_df$xmin <- stat_df$xmin + 0.2
+stat_df$xmax <- stat_df$xmax - 0.2
+stat_df
+
+mean_df <- df %>%
+  group_by(s1_Week, Donor_Type) %>%
+  summarise_at(vars(Overlap), list("mean" = mean))
+mean_df
+
+
+y_var <- max(df$Overlap) + (0.1 * max(df$Overlap))
+
+p <- ggplot(df)
+p <- p + geom_path(aes(x = s1_Week, y = Overlap, color = s1_Strain_1, group = s1_Mouse_ID), size = 0.5)
+p <- p + geom_point(aes(x = s1_Week, y = Overlap, fill = s1_Strain_1), shape = 21, size = 3) 
+p <- p + scale_color_manual(name = "Mouse Strain", values = Strain_color_pal[c(1:3, 6:9)], 
+  labels = c("C57", 
+             "LEW",
+             "NY2",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_fill_manual(name = "Mouse Strain", values = Strain_color_pal[c(1:3, 6:9)], 
+  labels = c("C57", 
+             "LEW",
+             "NY2",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "PMAN"
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + xlab("Weeks Post Colonization")
+p <- p + ylab("Similarity to Donor")
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif", hide.ns = FALSE, remove.bracket = TRUE, size = 3)
+p <- p + theme(text = element_text(family = "sans"))
+p <- p + ylim(NA, y_var)
+p
+
+
+file_name <- "Figure_S8B"
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 3, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. S8C – Richness + Evenness, single inoculation experiments 
+
+```{r Fig S8C}
+
+# Log Ratio plot
+
+require(microbiome)
+ps <- CU01_ps
+
+# subset to the first sequecing run
+# ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_1"))
+
+# subset to fecal outputs of mono-colonization experiment and donors
+samples_to_keep <- sort(sample_names(ps)[which(ps@sam_data$Strain_1 == ps@sam_data$Strain_2)])
+samples_to_keep <- samples_to_keep[!grepl("Inoculum", samples_to_keep)]
+ps <- subset_samples(ps, Sample_ID %in% samples_to_keep)
+
+# normalize for sequencing depth
+ps <- rarefy_even_depth(ps, sample.size = min(sample_sums(ps)), rngseed = 8675309)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+
+# Calculate Diversity Stats
+sample_data(ps) <- cbind(sample_data(ps), estimate_richness(ps), evenness(ps, index = "all"))
+
+sd <- data.frame(sample_data(ps))
+
+donors_df <- sd[sd$Sample_Type == "Donor", ]
+feces_df <- sd[sd$Sample_Type == "Feces_Output", ]
+feces_df <- feces_df[which(feces_df$Strain_1 == feces_df$Strain_2), ]
+
+feces_df$Donor_Shannon <- donors_df$Shannon[match(unlist(feces_df$Strain_1), donors_df$Strain_1)]
+feces_df$Donor_pielou <- donors_df$pielou[match(unlist(feces_df$Strain_1), donors_df$Strain_1)]
+
+# transform to log ratios
+feces_df$Shannon_Log_Ratio <- log2(feces_df$Shannon / feces_df$Donor_Shannon)
+feces_df$Pielou_Log_Ratio <- log2(feces_df$pielou / feces_df$Donor_pielou)
+
+mdf <- melt(feces_df, 
+            measure.vars = c("Shannon_Log_Ratio", "Pielou_Log_Ratio"), 
+            id.vars = c("Species_1","Strain_1" , "Time_Point", "Sample_Type", "Sample_ID", "Mouse_ID"),
+            variable.name = "Metric",
+            value.name = "Log_Ratio")
+mdf$Metric <- factor(mdf$Metric, levels = c("Pielou_Log_Ratio", "Shannon_Log_Ratio"))
+mdf$Donor_Type <- NA
+mdf$Donor_Type[mdf$Strain_1 %in% names(Strain_color_pal[c(1:3)])] <- "Native"
+mdf$Donor_Type[mdf$Strain_1 %in% names(Strain_color_pal[c(6:9)])] <- "Non-Native"
+
+facet_labels <- paste0("Week ", 1:4)
+names(facet_labels) <- paste0("w", 1:4)
+
+mdf$Strain_1 <- factor(mdf$Strain_1, levels = names(Strain_color_pal[c(1:3, 6:9)]))
+
+
+stat_df <- mdf %>%
+  group_by(Metric, Time_Point) %>%
+  wilcox_test(Log_Ratio ~ Donor_Type, p.adjust.method = "fdr")  %>%
+  add_significance("p") %>% 
+  add_xy_position(x = "Time_Point")
+stat_df$xmin <- stat_df$xmin + 0.2
+stat_df$xmax <- stat_df$xmax - 0.2
+stat_df
+
+# flip plot
+mdf$Metric <- factor(mdf$Metric, levels = c("Shannon_Log_Ratio", "Pielou_Log_Ratio"))
+facet_labels <- c("Shannon Diversity Index", "Pielou's Evenness")
+names(facet_labels) <- c("Shannon_Log_Ratio", "Pielou_Log_Ratio")
+
+y_var <- max(mdf$Log_Ratio) + (0.3 * max(mdf$Log_Ratio))
+
+p <- ggplot(mdf)
+#p <- p + geom_smooth(aes(x = Time_Point, y = Log_Ratio, color = Strain_1, group = Strain_1), se = FALSE,size = 2)
+p <- p + geom_path(aes(x = Time_Point, y = Log_Ratio, color = Strain_1, group = Mouse_ID), size = 0.5)
+p <- p + geom_point(aes(x = Time_Point, y = Log_Ratio, fill = Strain_1), shape = 21, size = 2)
+p <- p + facet_grid(~Metric, 
+                       labeller = labeller(Metric = facet_labels))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + geom_hline(yintercept = 0, linetype = "dashed", color = "gray")
+p <- p + scale_x_discrete(labels = 1:4)
+p <- p + scale_fill_manual(name = "Mouse Strain", values = Strain_color_pal[c(1:3, 6:9)], 
+  labels = c("C57", 
+             "LEW",
+             "NY2",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "PMAN"
+             ))
+p <- p + scale_color_manual(name = "Mouse Strain", values = Strain_color_pal[c(1:3, 6:9)], 
+  labels = c("C57", 
+             "LEW",
+             "NY2",
+             "ZBN",
+             "SPI",
+             "PAH",
+             "PMAN"
+             ))
+p <- p + ylab("log2(Recipient Value / Donor Value)")
+p <- p + xlab("Weeks Post Colonization")
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(text = element_text(family = "sans"))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif", hide.ns = FALSE, remove.bracket = TRUE, size = 3)
+p <- p + ylim(NA, y_var)
+p
+
+
+file_name <- "Figure_S8C"
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 2.5)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 5, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+
+```
+
+# Fig. S8D – bacterial load, single inoculation experiments 
+
+```{r Fig S8D}
+
+df <- qPCR_df
+# already identified techincal replicates that vary by more than .5 qPCR cycles
+df <- df[is.na(df$Omit_Technical_Variation), ]
+# remove outlier/ failed DNA extractiom
+df <- df[df$Copies_16S_per_mg_Feces > 1000, ]
+
+# subset to only Donor Samples
+Donor_df <- df[df$Sample_Type == "Donor", ]
+
+# Average Replicates within a mouse line
+Donor_df <- Donor_df %>%
+  group_by(Strain, Species) %>%
+  summarise_at(vars(Copies_16S_per_mg_Feces), list("Donor_Load" = mean))
+Donor_df <- data.frame(Donor_df)
+Donor_df
+
+# subset to only Feces_Output
+Sample_df <- df[df$Sample_Type == "Feces_Output", ]
+# When were samples collected?
+table(Sample_df$Time_Point, Sample_df$Strain)
+
+# Average Replicates within a mouse line
+Sample_df <- Sample_df %>%
+  group_by(Strain, Species, Time_Point) %>%
+  summarise_at(vars(Copies_16S_per_mg_Feces), list("Sample_Load" = mean))
+Sample_df <- data.frame(Sample_df)
+Sample_df$Donor_Load <- Donor_df$Donor_Load[match(unlist(Sample_df$Strain), Donor_df$Strain)]
+Sample_df <- Sample_df[!is.na(Sample_df$Donor_Load),]
+Sample_df$Load_Log_Ratio <- log2(Sample_df$Sample_Load / Sample_df$Donor_Load)
+Sample_df
+
+Sample_df$Host_Type <- "Non-Native"
+Sample_df$Host_Type[grep("Mmus_", Sample_df$Strain)] <- "Native"
+table(Sample_df$Host_Type)
+Sample_df$Host_Type <- factor(Sample_df$Host_Type, levels = c("Native", "Non-Native"))
+
+
+stat_df <- Sample_df %>%
+  # group_by(Strain_Comparison) %>%
+  wilcox_test(Load_Log_Ratio ~ Host_Type, p.adjust.method = "fdr")  %>%
+  add_significance("p") %>% 
+  add_xy_position(x = "Host_Type")
+stat_df
+
+
+Sample_df$Strain <- factor(Sample_df$Strain, levels = names(Strain_color_pal))
+
+
+# Log Ratio plot
+p <- ggplot(Sample_df)
+#p <- p + geom_hline(yintercept = 0, color = "gray", linetype = "dashed")
+p <- p + geom_boxplot(aes(x = Host_Type, y = Load_Log_Ratio), fill = "lightgray", color = "black",  outlier.shape = NA, width = .4)
+p <- p + geom_point(aes(x = Host_Type, y = Load_Log_Ratio, fill = Strain, shape  = Time_Point), color = "black", alpha = .9, size = 2, position = position_jitter(width  = .1, height = 0, seed = 8675309))
+p <- p + scale_fill_manual(name = "Strain", values = Strain_color_pal[c(1:3, 6:8)], 
+             labels = c(
+             "C57", 
+             "LEW",
+             "NY2",
+             "ZBN",
+             "SPI",
+             "PAH"
+             ))
+p <- p + scale_shape_manual(name = "Week", values = c("w3" = 22, "w4" = 21),
+             labels = c(
+             "3", 
+             "4"
+             ))
+p <- p + guides(fill = guide_legend(override.aes = list(shape = 21)))
+p <- p + xlab("Donor Type")
+p <- p + ylab("log2(Recipient Load / Donor Load)")
+p <- p + theme(axis.title.y = element_text(size = 9))
+p <- p + theme(axis.title.x = element_text(size = 9))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + ylim(NA, -0.5)
+p <- p + theme(text = element_text(family = "sans"))
+p
+
+file_name <- "Figure_S8D"
+
+legend <- get_legend(p) 
+grid.newpage()
+grid.draw(legend) 
+
+pdf(file.path(Save_fp, paste0(file_name, "_legend", ".pdf")), width = 2, height = 3)
+grid.draw(legend)
+invisible(dev.off())
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 1.75, height = 2.5)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+```
+
+# Figure 3 - trees rendered in [interactive Tree of Life](https://itol.embl.de/)
+
+```{r Name ASVs}
+
+# create arbitrary ASV names for sequences, for plotting clarity
+ps <- CU01_ps
+n_taxa <- ntaxa(ps)
+library("stringr")
+taxa_names(ps) <- paste0("ASV_", str_pad(1:n_taxa, width = nchar(n_taxa), pad = "0"))
+# look up table
+seq_to_tax_df <- data.frame("Seqs" = as.character(refseq(ps)),  
+                            "Taxa_Names" = taxa_names(ps))
+
+
+```
+
+
+```{r Define Native/NonNative Taxa}
+
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type == "Donor")
+sample_names(ps)
+range(sample_sums(ps))
+ps <- rarefy_even_depth(ps, sample.size = 10000, rngseed = 8675309, replace = FALSE, trimOTUs = FALSE)
+
+Mmus_ps <- subset_samples(ps, Species_1 == "Mmus")
+Mmus_ps <- prune_taxa(taxa_sums(Mmus_ps) > 0, Mmus_ps)
+sample_names(Mmus_ps)
+Mmus_taxa <- taxa_names(Mmus_ps)
+length(Mmus_taxa) # [1] 747
+
+NonMmus_ps <- subset_samples(ps, Species_1 != "Mmus")
+NonMmus_ps <- prune_taxa(taxa_sums(NonMmus_ps) > 0, NonMmus_ps)
+sample_names(NonMmus_ps)
+NonMmus_taxa <- taxa_names(NonMmus_ps)
+length(NonMmus_taxa) # [1] 1546
+
+Shared_Taxa <- Mmus_taxa[Mmus_taxa %in% NonMmus_taxa]
+Native_Taxa <- Mmus_taxa[!Mmus_taxa %in% NonMmus_taxa]
+NonNative_Taxa <- NonMmus_taxa[!NonMmus_taxa %in% Mmus_taxa]
+
+length(Shared_Taxa) # 308
+length(Native_Taxa) # 439
+length(NonNative_Taxa) # 1238
+
+# create list with Taxa_IDs too
+Native_Taxa_IDs <- seq_to_tax_df$Taxa_Names[match(Native_Taxa, seq_to_tax_df$Seqs)]
+
+```
+
+```{r 16S rRNA Load Table}
+
+# import qPCR Data
+df <- qPCR_df
+
+# already identified techincal replicates that vary by more than .5 qPCR cycles
+df <- df[is.na(df$Omit_Technical_Variation), ]
+# remove outlier/ failed DNA extractiom
+df <- df[df$Copies_16S_per_mg_Feces > 1000, ]
+# subset to only Donor Samples
+df <- df[df$Sample_Type == "Donor", ]
+# Average Replicates within a mouse line
+df <- df %>%
+  group_by(Strain, Species) %>%
+  summarise_at(vars(Copies_16S_per_mg_Feces), list(mean = mean))
+df <- data.frame(df)
+Load_16S_df <- df
+
+# qPCR readings were not avialable for Pman or NY4, but we are going to add placeholders so that the inocula are simulated in the same way for Experiment 1 and 2 (null assumption is equal microbe load)
+x <- mean(df[which(df$Species == "Mmus"), "mean"]) # use mean Mmus load
+df <- data.frame(Strain = c("Mmus_NY4", "Pman"), Species = c("Mmus", "Pman"), mean = c(x))
+Load_16S_df <- rbind(Load_16S_df, df)
+Load_16S_df
+
+```
+
+```{r Simulate Exp2 Inocula}
+
+### Donor Data ###
+# phyloseq object of the donor samples
+ps <- CU01_ps
+ps <- subset_samples(ps, Sample_Type %in% "Donor")
+# all Donor samples within a strain are merged 
+Donor_ps <- suppressWarnings(merge_samples(ps, "Strain_1"))
+sample_names(Donor_ps)
+
+Strain_Comparison_List <- c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")
+
+# number of replicates
+n <- 1
+
+for (i in seq_along(Strain_Comparison_List)) { 
+  i_Strain_Comparison <- Strain_Comparison_List[i]
+  print(paste("Simulating: ", i_Strain_Comparison))
+  
+  # calculate the fractions of reads from each donor
+  i_ps <- subset_samples(CU01_ps, Strain_Comparison %in% i_Strain_Comparison)
+  # just take the first sample
+  i_ps <- subset_samples(i_ps, sample_names(i_ps) %in% sample_names(i_ps)[1])
+  res_ps <- i_ps
+  i_Donor_1 <- i_ps@sam_data$Strain_1
+  i_Donor_2 <- i_ps@sam_data$Strain_2
+
+  i_Donor_1_ps <- subset_samples(Donor_ps, sample_names(Donor_ps) %in% i_Donor_1)
+  i_Donor_2_ps <- subset_samples(Donor_ps, sample_names(Donor_ps) %in% i_Donor_2)
+  
+  if (i_Strain_Comparison %in% c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")) {
+    # For Exp 2, assume 50:50 Mass Ratio, use mean mass
+    i_Donor_1_Mass <- mean(CU01_ps@sam_data$Strain_1_Fecal_Mass, na.rm = TRUE) * 1000
+    i_Donor_2_Mass <- mean(CU01_ps@sam_data$Strain_1_Fecal_Mass, na.rm = TRUE) * 1000
+  } else {
+    # For Exp 1, use measured masses for each inocula mixture
+    i_Donor_1_Mass <- i_ps@sam_data$Strain_1_Fecal_Mass * 1000
+    i_Donor_2_Mass <- i_ps@sam_data$Strain_2_Fecal_Mass * 1000
+  }
+
+  i_Donor_1_16S_Load <- Load_16S_df[Load_16S_df$Strain == i_Donor_1, "mean" ]
+  i_Donor_2_16S_Load  <- Load_16S_df[Load_16S_df$Strain == i_Donor_2, "mean" ]
+
+  i_Donor_1_16SLoad_In_Inocula <- i_Donor_1_Mass * i_Donor_1_16S_Load
+  i_Donor_2_16SLoad_In_Inocula <- i_Donor_2_Mass * i_Donor_2_16S_Load
+  i_16SCopies_In_Inocula <- i_Donor_1_16SLoad_In_Inocula + i_Donor_2_16SLoad_In_Inocula
+
+  i_Donor_1_Fraction <- i_Donor_1_16SLoad_In_Inocula / i_16SCopies_In_Inocula
+  i_Donor_2_Fraction <- i_Donor_2_16SLoad_In_Inocula / i_16SCopies_In_Inocula
+
+  print(paste0("     Donor 1: ", i_Donor_1, " Contrbutes ", round(i_Donor_1_Fraction, 2)*100 ,"% of the reads." ))
+  print(paste0("     Donor 2: ", i_Donor_2, " Contrbutes ", round(i_Donor_2_Fraction, 2)*100 ,"% of the reads." ))
+  
+  min_Seq_Depth <- min(sample_sums(i_Donor_1_ps), sample_sums(i_Donor_2_ps))
+  i_Donor_1_Sample_Depth <- ceiling(min_Seq_Depth * i_Donor_1_Fraction)
+  i_Donor_2_Sample_Depth <- min_Seq_Depth - i_Donor_1_Sample_Depth
+
+
+  # identify origin of ASVs
+  i_Donor_1_Taxa <- taxa_names(prune_taxa(taxa_sums(i_Donor_1_ps) > 0, i_Donor_1_ps))
+  i_Donor_2_Taxa <- taxa_names(prune_taxa(taxa_sums(i_Donor_2_ps) > 0, i_Donor_2_ps))
+  i_Shared_Taxa <- i_Donor_1_Taxa[i_Donor_1_Taxa %in% i_Donor_2_Taxa]
+  i_Donor_1_Exclusive_Taxa <- i_Donor_1_Taxa[!i_Donor_1_Taxa %in% i_Donor_2_Taxa]
+  i_Donor_2_Exclusive_Taxa <- i_Donor_2_Taxa[!i_Donor_2_Taxa %in% i_Donor_1_Taxa]
+
+  for (j in seq_along(1:n)) {
+    print(paste("|||||    Replicate:", j))
+    j_Donor_1_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_1_ps, 
+                          sample.size = i_Donor_1_Sample_Depth, 
+                          rngseed = j, replace = TRUE, trimOTUs = FALSE))
+    j_Donor_1_ps@sam_data$Strain_Comparison <- i_Strain_Comparison
+
+    j_Donor_2_ps <- suppressMessages(rarefy_even_depth(
+                          i_Donor_2_ps, 
+                          sample.size = i_Donor_2_Sample_Depth, 
+                          rngseed = j, replace = TRUE, trimOTUs = FALSE))
+    j_Donor_2_ps@sam_data$Strain_Comparison <- i_Strain_Comparison
+
+    j_Donors_ps <- suppressMessages(merge_phyloseq(j_Donor_1_ps, j_Donor_2_ps))
+    j_Donors_combined_ps <- suppressWarnings(merge_samples(j_Donors_ps, "Strain_Comparison"))
+    
+    sample_names(i_ps) <- sample_names(j_Donors_combined_ps)
+    sample_data(j_Donors_combined_ps) <- sample_data(i_ps)
+    
+    sample_names(j_Donors_combined_ps) <- paste0(i_Strain_Comparison, "__Rep_", j)
+    j_Donors_combined_ps@sam_data$Replicate <- j
+    
+    res_ps <- merge_phyloseq(res_ps, j_Donors_combined_ps)
+  
+  }
+  
+  # remove the starting sample
+  res_ps@sam_data$Sample_Type[grep("__Rep_", sample_names(res_ps))] <- "Simulated_Inocula"
+  res_ps <- subset_samples(res_ps, Sample_Type == "Simulated_Inocula")
+
+  # update sample_data() for Week
+  res_ps@sam_data$Week <- 0
+  
+  # transform data to relative abundance
+  res_t_ps <- transform_sample_counts(res_ps, function(x) x / sum(x) )
+
+  # melt the data.frame
+  res_psmelt <- psmelt(res_t_ps)
+
+  # add local definitions of Native/Non-Native
+  res_psmelt[res_psmelt$OTU %in% i_Shared_Taxa, "ASV_Origin"] <- "Shared"
+  res_psmelt[res_psmelt$OTU %in% i_Donor_1_Exclusive_Taxa, "ASV_Origin"] <- "Native"
+  res_psmelt[res_psmelt$OTU %in% i_Donor_2_Exclusive_Taxa, "ASV_Origin"] <- "NonNative"
+  
+  # add global definitions of Native/Non-Native
+  res_psmelt$ASV_Origin_Global <- NA
+  res_psmelt$ASV_Origin_Global[which(res_psmelt$OTU %in% Native_Taxa)] <- "Native"
+  res_psmelt$ASV_Origin_Global[which(res_psmelt$OTU %in% NonNative_Taxa)] <- "NonNative"
+  
+  # add Taxa_ID names for ASVs
+  res_psmelt$Taxa_ID <- seq_to_tax_df$Taxa_Names[match(res_psmelt$OTU, seq_to_tax_df$Seqs)]
+  
+  i_file_name <- paste0("Expected_Inocula_", i_Strain_Comparison,"_", n, "_Replicate_")
+  saveRDS(res_ps, file.path(Save_fp, paste0(i_file_name, "ps.rds")))
+  saveRDS(res_psmelt, file.path(Save_fp, paste0(i_file_name, "psmelt.rds")))
+  
+  }
+
+```
+
+```{r set Time_Point}
+
+Time_Point_var <- "w4"
+
+```
+
+```{r Compare Expected vs Observed}
+
+library(tidyverse)
+
+Strain_Comparison_List <- c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")
+
+for (i in seq_along(Strain_Comparison_List)) {
+  i_Strain_Comparison <- Strain_Comparison_List[i]
+  print(i_Strain_Comparison)
+  
+  # Import Expected From Simulation Code Chunk Above
+  i_Expected_df <- readRDS(file.path(Save_fp, paste0("Expected_Inocula_", i_Strain_Comparison, "_1_Replicate_psmelt.rds")))
+  # get list of ASVs to scan through
+  i_taxa_list <- unique(i_Expected_df$OTU)
+  
+  # Add placeholders for incoming data
+  
+  # exact binomial test
+  i_Expected_df$p <- NA
+  i_Expected_df$alternative <- NA
+  i_Expected_df$conf.level <- NA
+  i_Expected_df$WT_mean <- NA
+  i_Expected_df$WT_n <- NA
+  i_Expected_df$WT_Successes <- NA
+  i_Expected_df$WT_pval <- NA
+  i_Expected_df$Rag1_mean <- NA
+  i_Expected_df$Rag1_n <- NA
+  i_Expected_df$Rag1_Successes <- NA
+  i_Expected_df$Rag1_pval <- NA
+  # Fisher Exact Test
+  i_Expected_df$Fisher_pval <- NA
+  # Wilcoxon Test
+  i_Expected_df$Wilcox_pval <- NA
+
+  # Import Observed Data
+  ps <- CU01_ps
+  # subset to appropraite data subset
+  ps <- subset_samples(ps, Sequencing_Run == "Seq_Run_2")
+  ps <- subset_samples(ps, Sample_Type == "Feces_Output")
+  ps <- subset_samples(ps, Time_Point == Time_Point_var)
+  ps <- subset_samples(ps, Strain_Comparison == i_Strain_Comparison)
+  # transform to relative abundance
+  ps <- transform_sample_counts(ps, function(x) x / sum(x) )
+  ps
+  
+  # partition by genotype
+  WT_ps <- subset_samples(ps, Recipient_Genotype == "WT")
+  WT_asv <- data.frame(otu_table(WT_ps)@.Data)
+  # make a copy to hold results
+  WT_asv_res <- WT_asv 
+  colnames(WT_asv_res) <- seq_to_tax_df$Taxa_Names[match(colnames(WT_asv_res),
+                                                         seq_to_tax_df$Seqs)]
+  dim(WT_asv_res)
+
+  Rag1_ps <- subset_samples(ps, Recipient_Genotype == "Rag1")
+  Rag1_asv <- data.frame(otu_table(Rag1_ps)@.Data)
+  # make a copy to hold results
+  Rag1_asv_res <- Rag1_asv
+  colnames(Rag1_asv_res) <- seq_to_tax_df$Taxa_Names[match(colnames(Rag1_asv_res),
+                                                           seq_to_tax_df$Seqs)]
+  dim(Rag1_asv_res)
+
+    # perform Exact Binomial Test
+  # x = number of successes
+  # n = number of trials
+  # p = hypothesized probability of success
+  p = 0.5
+  alternative = c("greater")
+  conf.level = 0.95
+  WT_n <- nsamples(WT_ps)
+  Rag1_n <- nsamples(Rag1_ps)
+
+  for (j in seq_along(i_taxa_list)) {
+
+    j_taxa <- i_taxa_list[j]
+    x <- which(i_Expected_df$OTU == j_taxa)
+    j_Taxa_ID <- i_Expected_df[x, "Taxa_ID"]
+    j_Family <- i_Expected_df[x, "Family"]
+    print(paste0("||||   ", j_Taxa_ID, " - ", j_Family))
+    print(paste0("||||   ", round(100*(j / length(i_taxa_list))), "% Complete    ||||"))
+
+    j_Expected <- i_Expected_df[x, "Abundance"]
+    
+    # Wildtype Mice
+    j_WT_Observed <- WT_asv[,j_taxa]
+    j_WT_mean <- mean(j_WT_Observed)
+    j_WT_Successes <- sum(j_WT_Observed > j_Expected)
+
+    WT_binom.test <- binom.test(x = j_WT_Successes, n = WT_n, p = p,
+        conf.level = conf.level, alternative = alternative)
+    WT_pval <- WT_binom.test$p.value
+    WT_pval
+
+    # Rag1-/- Mice
+    j_Rag1_Observed <- Rag1_asv[,j_taxa]
+    j_Rag1_mean <- mean(j_Rag1_Observed)
+    j_Rag1_Successes <- sum(j_Rag1_Observed > j_Expected)
+    
+    Rag1_binom.test <- binom.test(x = j_Rag1_Successes, n = Rag1_n, p = p,
+        conf.level = conf.level, alternative = alternative)
+    Rag1_pval <- Rag1_binom.test$p.value
+    Rag1_pval
+    
+    # Fisher Exact Test
+    j_WT_Obs_Greater_Than_Exp <- ifelse(j_WT_Observed > j_Expected, "Greater", "Not_Greater")
+    j_Rag1_Obs_Greater_Than_Exp <- ifelse(j_Rag1_Observed > j_Expected, "Greater", "Not_Greater")
+    
+    # for an iToL figure later
+    WT_asv_res[,j_Taxa_ID] <- ifelse(j_WT_Observed > j_Expected, 1, 0)
+    Rag1_asv_res[,j_Taxa_ID] <- ifelse(j_Rag1_Observed > j_Expected, 1, 0)
+
+    # Combine
+    max_length <- max(length(j_WT_Obs_Greater_Than_Exp), length(j_Rag1_Obs_Greater_Than_Exp))
+    if (length(j_WT_Obs_Greater_Than_Exp) < max_length) {
+      length_diff <- max_length - length(j_WT_Obs_Greater_Than_Exp)
+      j_WT_Obs_Greater_Than_Exp <- c(j_WT_Obs_Greater_Than_Exp, rep(NA, length_diff))
+    }
+    if (length(j_Rag1_Obs_Greater_Than_Exp) < max_length) {
+      length_diff <- max_length - length(j_Rag1_Obs_Greater_Than_Exp)
+      j_Rag1_Obs_Greater_Than_Exp <- c(j_Rag1_Obs_Greater_Than_Exp, rep(NA, length_diff))
+    }
+    dat2 <- data.frame(WT = j_WT_Obs_Greater_Than_Exp, Rag1 = j_Rag1_Obs_Greater_Than_Exp)
+    
+    dat2$WT <- factor(dat2$WT, levels = c("Greater", "Not_Greater"))
+    dat2$Rag1 <- factor(dat2$Rag1, levels = c("Greater", "Not_Greater"))
+    dat3 <- table(dat2$WT, dat2$Rag1)
+    res2 <- fisher.test(dat3, alternative = alternative)
+    res2
+
+    # Wilcoxon Test to see if Observed - Expected means differ between genotypes
+    j_WT_Obs_minus_Exp <- j_WT_Observed - j_Expected
+    j_Rag1_Obs_minus_Exp <- j_Rag1_Observed - j_Expected
+
+    # dat1 <- data.frame(WT = j_WT_Obs_minus_Exp, Rag1 = j_Rag1_Obs_minus_Exp)
+    max_length <- max(length(j_WT_Obs_minus_Exp), length(j_Rag1_Obs_minus_Exp))
+    if (length(j_WT_Obs_minus_Exp) < max_length) {
+      length_diff <- max_length - length(j_WT_Obs_minus_Exp)
+      j_WT_Obs_minus_Exp <- c(j_WT_Obs_minus_Exp, rep(NA, length_diff))
+    }
+    if (length(j_Rag1_Obs_minus_Exp) < max_length) {
+      length_diff <- max_length - length(j_Rag1_Obs_minus_Exp)
+      j_Rag1_Obs_minus_Exp <- c(j_Rag1_Obs_minus_Exp, rep(NA, length_diff))
+    }
+    dat1 <- data.frame(WT = j_WT_Obs_minus_Exp, Rag1 = j_Rag1_Obs_minus_Exp)
+
+    
+    mdat1 <- suppressMessages(melt(dat1, variable.name = "Genotype", value.name = "Obs_minus_Exp")) 
+    res1 <- suppressWarnings(wilcox.test(Obs_minus_Exp ~ Genotype, data = mdat1, 
+                                         paired = FALSE, alternative = alternative))
+    res1
+
+    # record data
+    # Exact Binomial
+    i_Expected_df[x, "p"] <- p
+    i_Expected_df[x, "alternative"] <- alternative
+    i_Expected_df[x, "conf.level"] <- conf.level
+    i_Expected_df[x, "WT_mean"] <- j_WT_mean
+    i_Expected_df[x, "WT_n"] <- WT_n
+    i_Expected_df[x, "WT_Successes"] <- j_WT_Successes
+    i_Expected_df[x, "WT_pval"] <- WT_pval
+    i_Expected_df[x, "Rag1_mean"] <- j_Rag1_mean
+    i_Expected_df[x, "Rag1_n"] <- Rag1_n
+    i_Expected_df[x, "Rag1_Successes"] <- j_Rag1_Successes
+    i_Expected_df[x, "Rag1_pval"] <- Rag1_pval
+    # Fisher Exact Test
+    i_Expected_df[x, "Fisher_pval"] <- res2$p.value
+    # Wilcoxon Test
+    i_Expected_df[x, "Wilcox_pval"] <- res1$p.value
+
+    print(paste("Pvals:   WT", round(WT_pval, 3), "  Rag1", round(Rag1_pval, 3)))
+    print(paste("Pvals:   Fisher", round(res2$p.value, 3), "  Wilcoxon", round(res1$p.value, 3)))
+
+  }
+  
+  # save files
+  file_name <- paste0("Binom_Test_", i_Strain_Comparison, ".rds")
+  saveRDS(i_Expected_df, file.path(Save_fp, file_name))
+  
+  file_name <- paste0("WT_asv_res_", i_Strain_Comparison, ".rds")
+  saveRDS(WT_asv_res, file.path(Save_fp, file_name)) 
+  
+  file_name <- paste0("Rag1_asv_res_", i_Strain_Comparison, ".rds")
+  saveRDS(Rag1_asv_res, file.path(Save_fp, file_name)) 
+
+}
+
+
+```
+
+
+```{r Fig3A: write to files}
+
+ps <- CU01_ps
+taxa_names(ps) <- seq_to_tax_df$Taxa_Names[match(taxa_names(ps), seq_to_tax_df$Seqs)]
+
+# subset to week 4, experiment 2 samples
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+ps <- subset_samples(ps, Time_Point %in%  c(Time_Point_var))
+
+# now prune to the native taxa 
+ps <- prune_taxa(Native_Taxa_IDs, ps)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps # 123 taxa and 74 samples
+# Save list of taxa For later
+Taxa_IDs_in_Exp2_Native_Tree <- taxa_names(ps)
+
+file_name <- paste0("Figure_3A")
+
+#### Tree File for iToL #### 
+tree <- phy_tree(ps)
+tree
+# Phylogenetic tree with 123 tips and 122 internal nodes.
+ape::write.tree(tree, file.path(Save_fp, paste0(file_name, ".tree")))
+
+#### Tip File for iToL #### 
+
+# make phylum color pallet for tree tips
+set.seed(0)
+n <- sample(unique(as.character(tax_table(CU01_ps)[,"Phylum"])))
+n[is.na(n)] <- "Bacteria"
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+Phylum_color_pal <- gg_color_hue(length(n))
+names(Phylum_color_pal) <- n
+
+df <- data.frame(tax_table(ps))
+df$Tip_Names <- rownames(df)
+df$Tip_type <- "branch"
+df$Tip_color <- Phylum_color_pal[df$Phylum]
+df$Tip_stype <- "normal"
+df$Tip_size <- 1
+
+fp <- file.path(Save_fp, paste0(file_name, "_Tip", ".txt"))
+header <- c("TREE_COLORS", "SEPARATOR TAB", "DATA")             
+writeLines(header, fp)
+write.table(df[, grep("Tip_", colnames(df))], fp, sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE, append = TRUE)
+
+```
+
+```{r Fig 3A: Binary Tip Shape File for iToL }
+
+#### Binary Tip Shape File for iToL ####
+
+### import Mmus_FL1_vs_Mpah data ###
+file_name_2 <- paste0("Binom_Test_", "Mmus_FL1_vs_Mpah", ".rds")
+Binom_df <- readRDS(file.path(Save_fp, file_name_2)) 
+
+# Filter to only native ASVs
+dim(Binom_df) # [1] 6903   57
+Binom_df <- Binom_df[which(Binom_df$ASV_Origin_Global == "Native"),]
+dim(Binom_df) # [1] 439  57
+
+# Filter to those with non-zero abundance
+Binom_df <- Binom_df[which(Binom_df$Abundance > 0),]
+dim(Binom_df) # [1] 90  57
+
+Mmus_FL1_vs_Mpah_Native_Taxa <- Binom_df$Taxa_ID
+length(Mmus_FL1_vs_Mpah_Native_Taxa) # [1] 90
+
+# Filter to only significant ASVs in each genotype
+Mmus_FL1_vs_Mpah_Native_Sig_WT_Taxa <- Binom_df[Binom_df$WT_pval <= 0.05, "Taxa_ID"]
+length(Mmus_FL1_vs_Mpah_Native_Sig_WT_Taxa) # [1] 12
+
+Mmus_FL1_vs_Mpah_Native_Sig_Rag1_Taxa <- Binom_df[Binom_df$Rag1_pval <= 0.05, "Taxa_ID"]
+length(Mmus_FL1_vs_Mpah_Native_Sig_Rag1_Taxa) # [1] 11
+
+### import Mmus_NY4_vs_Pman data ###
+file_name_2 <- paste0("Binom_Test_", "Mmus_NY4_vs_Pman", ".rds")
+Binom_df <- readRDS(file.path(Save_fp, file_name_2)) 
+
+# Filter to only native ASVs
+dim(Binom_df) # [1] 6903   57
+Binom_df <- Binom_df[which(Binom_df$ASV_Origin_Global == "Native"),]
+dim(Binom_df) # [1] 439  57
+
+# Filter to those with non-zero abundance
+Binom_df <- Binom_df[which(Binom_df$Abundance > 0),]
+dim(Binom_df) # [1] 104  57
+
+Mmus_NY4_vs_Pman_Native_Taxa <- Binom_df$Taxa_ID
+length(Mmus_NY4_vs_Pman_Native_Taxa) # [1] 104
+
+# Filter to only significant ASVs in each genotype
+Mmus_NY4_vs_Pman_Native_Sig_WT_Taxa <- Binom_df[Binom_df$WT_pval <= 0.05, "Taxa_ID"]
+length(Mmus_NY4_vs_Pman_Native_Sig_WT_Taxa) # [1] 5
+
+Mmus_NY4_vs_Pman_Native_Sig_Rag1_Taxa <- Binom_df[Binom_df$Rag1_pval <= 0.05, "Taxa_ID"]
+length(Mmus_NY4_vs_Pman_Native_Sig_Rag1_Taxa) # [1] 8
+
+x <- c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")
+y <- c("WT", "Rag1")
+z <- paste0("Binary_", paste(rep(x, each = length(y)), y, sep = "__"))
+
+ps <- CU01_ps
+taxa_names(ps) <- seq_to_tax_df$Taxa_Names[match(taxa_names(ps), seq_to_tax_df$Seqs)]
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+ps <- subset_samples(ps, Time_Point %in%  c(Time_Point_var))
+ps <- prune_taxa(Native_Taxa_IDs, ps)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps # 123 taxa and 74 samples
+
+df <- data.frame(tax_table(ps))
+dim(df) #[1] 123   8
+df$Binary_Names <- rownames(df)
+for (i in z) { df[[i]] <- -1}
+
+ps <- CU01_ps
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Strain_Comparison == "Mmus_FL1_vs_Mpah")
+ps <- subset_samples(ps, Time_Point == Time_Point_var)
+ps <- prune_taxa(Native_Taxa, ps)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps # 75 taxa and 36 samples
+Mmus_FL1_vs_Mpah_Native_Feces_Output_Taxa <- taxa_names(ps)
+Mmus_FL1_vs_Mpah_Native_Feces_Output_Taxa_IDs <- seq_to_tax_df$Taxa_Names[match(Mmus_FL1_vs_Mpah_Native_Feces_Output_Taxa, seq_to_tax_df$Seqs)]
+length(Mmus_FL1_vs_Mpah_Native_Feces_Output_Taxa_IDs) # [1] 75
+
+ps <- CU01_ps
+ps <- subset_samples(ps, Sequencing_Run %in%  c("Seq_Run_2"))
+ps <- subset_samples(ps, Sample_Type %in%  c("Feces_Output"))
+ps <- subset_samples(ps, Strain_Comparison == "Mmus_NY4_vs_Pman")
+ps <- subset_samples(ps, Time_Point == Time_Point_var)
+ps <- prune_taxa(Native_Taxa, ps)
+ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+ps # 67 taxa and 38 samples
+Mmus_NY4_vs_Pman_Native_Feces_Output_Taxa <- taxa_names(ps)
+Mmus_NY4_vs_Pman_Native_Feces_Output_Taxa_IDs <- seq_to_tax_df$Taxa_Names[match(Mmus_NY4_vs_Pman_Native_Feces_Output_Taxa, seq_to_tax_df$Seqs)]
+length(Mmus_NY4_vs_Pman_Native_Feces_Output_Taxa_IDs) # [1] 67
+
+# add to table
+df$Binary_Mmus_FL1_vs_Mpah__WT[df$Binary_Names %in% Mmus_FL1_vs_Mpah_Native_Feces_Output_Taxa_IDs] <- 0
+df$Binary_Mmus_FL1_vs_Mpah__WT[df$Binary_Names %in% Mmus_FL1_vs_Mpah_Native_Sig_WT_Taxa] <- 1
+table(df$Binary_Mmus_FL1_vs_Mpah__WT, useNA = "always")
+# -1    0    1 <NA> 
+#  48   63   12    0 
+
+df$Binary_Mmus_FL1_vs_Mpah__Rag1[df$Binary_Names %in% Mmus_FL1_vs_Mpah_Native_Feces_Output_Taxa_IDs] <- 0
+df$Binary_Mmus_FL1_vs_Mpah__Rag1[df$Binary_Names %in% Mmus_FL1_vs_Mpah_Native_Sig_Rag1_Taxa] <- 1
+table(df$Binary_Mmus_FL1_vs_Mpah__Rag1, useNA = "always")
+#  -1    0    1 <NA> 
+#  48   64   11    0 
+
+df$Binary_Mmus_NY4_vs_Pman__WT[df$Binary_Names %in% Mmus_NY4_vs_Pman_Native_Feces_Output_Taxa_IDs] <- 0
+df$Binary_Mmus_NY4_vs_Pman__WT[df$Binary_Names %in% Mmus_NY4_vs_Pman_Native_Sig_WT_Taxa] <- 1
+table(df$Binary_Mmus_NY4_vs_Pman__WT, useNA = "always")
+#  -1    0    1 <NA> 
+#  56   62    5    0 
+
+df$Binary_Mmus_NY4_vs_Pman__Rag1[df$Binary_Names %in% Mmus_NY4_vs_Pman_Native_Feces_Output_Taxa_IDs] <- 0
+df$Binary_Mmus_NY4_vs_Pman__Rag1[df$Binary_Names %in% Mmus_NY4_vs_Pman_Native_Sig_Rag1_Taxa] <- 1
+table(df$Binary_Mmus_NY4_vs_Pman__Rag1, useNA = "always")
+#  -1    0    1 <NA> 
+#  56   59    8    0 
+
+fp <- file.path(Save_fp, paste0(file_name, "_Binary", ".txt"))
+header <- c("DATASET_BINARY", 
+            "SEPARATOR TAB", 
+            "DATASET_LABEL	Native ASVs", 
+            "FIELD_SHAPES	1	1	1	1",
+            "FIELD_LABELS	FL1+Mpah WT	FL1+Mpah Rag1-/-	NY4+Pman WT	NY4+Pman Rag1-/-",
+            "FIELD_COLORS	#000000	#000000	#000000	#000000",
+            "DATA")    
+
+writeLines(header, fp)
+write.table(df[, grep("Binary_", colnames(df))], fp, sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE, append = TRUE)
+
+Fig3A_Binary_df <- df
+Fig3B_df <- Fig3A_Binary_df[which(Fig3A_Binary_df$Binary_Mmus_FL1_vs_Mpah__WT == 1 & Fig3A_Binary_df$Binary_Mmus_FL1_vs_Mpah__Rag1 == 0),]
+dim(Fig3B_df) # [1]  7 12
+Fig3B_Taxa_IDs <- Fig3B_df$Binary_Names
+Fig3B_Seqs <- seq_to_tax_df$Seqs[match(Fig3B_Taxa_IDs, seq_to_tax_df$Taxa_Names)]
+
+```
+
+
+```{r Fig 3B: write to files}
+
+i_Strain_Comparison <- "Mmus_FL1_vs_Mpah"
+# i_Strain_Comparison <- "Mmus_NY4_vs_Pman"
+
+# Import Observed
+  ps <- CU01_ps
+  ps <- subset_samples(ps, Sequencing_Run == "Seq_Run_2")
+  ps <- subset_samples(ps, Sample_Type == "Feces_Output")
+  ps <- subset_samples(ps, Time_Point == Time_Point_var)
+  ps <- subset_samples(ps, Strain_Comparison == i_Strain_Comparison)
+  ps <- prune_taxa(Fig3B_Seqs, ps)
+  ps # 7 taxa and 36/38 samples
+  
+  # transform observed data to relative abundance
+  ps <- transform_sample_counts(ps, function(x) x / sum(x) )
+  # melt datset into longform
+  psmelt <- psmelt(ps)
+  psmelt$Taxa_ID <- seq_to_tax_df$Taxa_Names[match(psmelt$OTU, seq_to_tax_df$Seqs)]
+  
+file_name <- paste0("Figure_3B")
+
+#### Tree File for iToL #### 
+taxa_names(ps) <- seq_to_tax_df$Taxa_Names[match(taxa_names(ps), seq_to_tax_df$Seqs)]
+tree <- phy_tree(ps)
+tree # Phylogenetic tree with 7 tips and 6 internal nodes.
+ape::write.tree(tree, file.path(Save_fp, paste0(file_name, ".tree")))
+
+#### Tip File for iToL #### 
+
+df <- data.frame(tax_table(ps))
+df$Tip_Names <- rownames(df)
+df$Tip_type <- "branch"
+df$Tip_color <- Phylum_color_pal[df$Phylum]
+df$Tip_stype <- "normal"
+df$Tip_size <- 1
+
+fp <- file.path(Save_fp, paste0(file_name, "_Tip", ".txt"))
+header <- c("TREE_COLORS", "SEPARATOR TAB", "DATA")             
+writeLines(header, fp)
+write.table(df[, grep("Tip_", colnames(df))], fp, sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE, append = TRUE)
+
+```
+
+
+```{r Fig 3B take 4 - FL1_vs_Mpah ASVs that differ by Genotype}
+
+#### Binary Tip Shape File for iToL ####
+
+i_Strain_Comparison <- "Mmus_FL1_vs_Mpah"
+
+# Import Expected
+i_Expected_df <- readRDS(file.path(Save_fp, paste0("Expected_Inocula_", i_Strain_Comparison, "_1_Replicate_psmelt.rds")))
+i_Expected_df <- i_Expected_df[i_Expected_df$OTU %in% Fig3B_Seqs, ]
+dim(i_Expected_df) # [1] 7  44
+
+# Import Observed
+  ps <- CU01_ps
+  ps <- subset_samples(ps, Sequencing_Run == "Seq_Run_2")
+  ps <- subset_samples(ps, Sample_Type == "Feces_Output")
+  ps <- subset_samples(ps, Time_Point == Time_Point_var)
+  ps <- subset_samples(ps, Strain_Comparison == i_Strain_Comparison)
+  ps <- prune_taxa(Fig3B_Seqs, ps)
+  ps # 7 taxa and 36 samples
+  # transform observed data to relative abundance
+  ps <- transform_sample_counts(ps, function(x) x / sum(x) )
+  psmelt <- psmelt(ps)
+  psmelt$Taxa_ID <- seq_to_tax_df$Taxa_Names[match(psmelt$OTU, seq_to_tax_df$Seqs)]
+  
+
+#Fig3B_Seqs
+Fig3B_Taxa_IDs
+
+file_name <- paste0("WT_asv_res_", i_Strain_Comparison, ".rds")
+WT_asv_res <- readRDS(file.path(Save_fp, file_name)) 
+
+file_name <- paste0("Rag1_asv_res_", i_Strain_Comparison, ".rds")
+Rag1_asv_res <- readRDS(file.path(Save_fp, file_name)) 
+
+res_asv <-  rbind(WT_asv_res, Rag1_asv_res)
+dim(res_asv) # [1]   36 6903
+
+# filter to the taxa of interest
+res_asv <- res_asv[,colnames(res_asv) %in% Fig3B_Taxa_IDs, ]
+dim(res_asv) # [1] 36  7
+res_asv <- data.frame(t(res_asv))
+n <- dim(res_asv)[2]
+# easy copy/paste for header below
+cat(rep(1, n), sep = "\t")
+cat(rep("#000000", n), sep = "\t")
+cat(colnames(res_asv), sep = "\t")
+
+res_asv$Row_Names <- rownames(res_asv)
+res_asv <- res_asv[,c("Row_Names", colnames(res_asv)[1:length(colnames(res_asv)) - 1])]
+
+fp <- file.path(Save_fp, paste0(file_name, "_Binary", ".txt"))
+header <- c("DATASET_BINARY", 
+            "SEPARATOR TAB", 
+            "DATASET_LABEL	Native ASVs", 
+            "FIELD_SHAPES	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1	1",
+            "FIELD_LABELS	WT_MpahFL1_6w_m54_c113	WT_MpahFL1_6w_m55_c113	WT_MpahFL1_6w_m56_c113	WT_MpahFL1_6w_m57_c243	WT_MpahFL1_6w_m58_c243	WT_MpahFL1_6w_m59_c243	WT_MpahFL1_6w_m60_c744	WT_MpahFL1_6w_m61_c744	WT_MpahFL1_6w_m62_c744	WT_MpahFL1_6w_m63_c775	WT_MpahFL1_6w_m64_c775	WT_MpahFL1_6w_m66_c266	WT_MpahFL1_6w_m67_c266	WT_MpahFL1_6w_m68_c266	Rag1_MpahFL1_6w_m71_c603	Rag1_MpahFL1_6w_m72_c603	Rag1_MpahFL1_6w_m73_c603	Rag1_MpahFL1_6w_m74_c680	Rag1_MpahFL1_6w_m76_c680	Rag1_MpahFL1_6w_m77_c680	Rag1_MpahFL1_6w_m78_c34	Rag1_MpahFL1_6w_m79_c34	Rag1_MpahFL1_6w_m80_c34	Rag1_MpahFL1_6w_m81_c158	Rag1_MpahFL1_6w_m82_c158	Rag1_MpahFL1_6w_m83_c158	Rag1_MpahFL1_6w_m84_c129	Rag1_MpahFL1_6w_m85_c129	Rag1_MpahFL1_6w_m86_c129	Rag1_MpahFL1_6w_m87_c232	Rag1_MpahFL1_6w_m88_c232",
+            "FIELD_COLORS	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000	#000000",
+            "DATA")    
+
+writeLines(header, fp)
+write.table(res_asv, fp, sep = "\t", quote = FALSE, col.names = FALSE, row.names = FALSE, append = TRUE)
+
+```
+
+# Fig. 3C - ASV relative abundance by genotype
+
+```{r Fig 3C}
+
+
+Strain_Comparison_List <- c("Mmus_FL1_vs_Mpah", "Mmus_NY4_vs_Pman")
+Time_Point_var <- "w4"
+i <- 1
+i_Strain_Comparison <- Strain_Comparison_List[i]
+print(i_Strain_Comparison)
+
+# Import Observed Data
+  ps <- CU01_ps
+  # subset to appropraite data subset
+  ps <- subset_samples(ps, Sequencing_Run == "Seq_Run_2")
+  ps <- subset_samples(ps, Sample_Type == "Feces_Output")
+  ps <- subset_samples(ps, Time_Point == Time_Point_var)
+  ps <- subset_samples(ps, Strain_Comparison == i_Strain_Comparison)
+  # transform to relative abundance
+  ps <- transform_sample_counts(ps, function(x) x / sum(x))
+  ps <- prune_taxa(taxa_sums(ps) > 0, ps)
+  ps <- prune_taxa(Native_Taxa, ps)
+  ps #  75 taxa and 36 samples
+  
+  sd <- data.frame(sample_data(ps))
+  #table(sd$Cage_ID, sd$Recipient_Genotype)
+  
+  # melt data into longform
+  psmelt <- psmelt(ps)
+  psmelt$Taxa_ID <- seq_to_tax_df$Taxa_Names[match(psmelt$OTU, seq_to_tax_df$Seqs)]
+  dim(psmelt) # [1] 2700    41
+  
+# Import Expected From Simulation Code Chunk Above
+i_Expected_df <- readRDS(file.path(Save_fp, paste0("Expected_Inocula_", i_Strain_Comparison, "_1_Replicate_psmelt.rds")))
+
+psmelt$Expected_RA <- i_Expected_df$Abundance[match(psmelt$Taxa_ID, i_Expected_df$Taxa_ID)]
+psmelt$Obs_minus_Exp <- psmelt$Abundance - psmelt$Expected_RA
+psmelt$Recipient_Genotype <- factor(psmelt$Recipient_Genotype, levels = c("WT", "Rag1"))
+
+# filter to just the seven ASVs
+dim(psmelt) # [1] 2700   43
+psmelt <- psmelt[psmelt$Taxa_ID %in% Fig3B_Taxa_IDs, ]
+dim(psmelt) # [1] 252  43
+
+mean_df <- psmelt %>%
+  group_by(Cage_ID, Taxa_ID, Recipient_Genotype) %>%
+  summarise_at(vars(Obs_minus_Exp), list(Obs_minus_Exp_Cage_Mean = mean))
+dim(mean_df) # [1] 84  4
+head(mean_df)
+
+
+stat_df <- mean_df %>%
+  group_by(Taxa_ID) %>%
+  wilcox_test(Obs_minus_Exp_Cage_Mean ~ Recipient_Genotype, p.adjust.method = "BH")  %>%
+  #adjust_pvalue(method = "fdr") %>%
+  add_significance("p") %>% 
+  add_xy_position(x = "Recipient_Genotype")
+stat_df
+
+stat_df <- stat_df[stat_df$p < 0.05,]
+stat_df$y.position <- c(0.0045,  0.0055,  0.00088,  0.003)
+mean_df <- mean_df[mean_df$Taxa_ID %in% stat_df$Taxa_ID, ]
+
+mean_df$Taxa_ID <- gsub("_", " ", mean_df$Taxa_ID)
+stat_df$Taxa_ID <- gsub("_", " ", stat_df$Taxa_ID)
+
+require(facetscales)
+scales_y <- list(
+  `ASV 0948` = scale_y_continuous(limits = c(-0.0006, 0.0045 + 0.0005), breaks = c(0,0.00225, 0.0045)),
+  `ASV 2073` = scale_y_continuous(limits = c(-0.002, 0.0055 + 0.0005), breaks = c(0,0.00275,  0.0055)),
+  `ASV 4744` = scale_y_continuous(limits = c(-0.0002, 0.00088 + 0.00005), breaks = c(0,0.00044, 0.00088)),
+  `ASV 6718` = scale_y_continuous(limits = c(-0.0006, 0.003 + 0.0005), breaks = c(0, 0.0015, 0.003))
+)
+
+p <- ggplot(mean_df)
+p <- p + geom_hline(yintercept = 0, linetype = "dashed", color = "gray")
+p <- p + geom_boxplot(aes(x = Recipient_Genotype, y = Obs_minus_Exp_Cage_Mean), fill = "lightgray", color = "black",  outlier.shape = NA, width = 0.5)
+p <- p + geom_point(aes(x = Recipient_Genotype, y = Obs_minus_Exp_Cage_Mean), shape = 21, color = "black", fill = "#D23105FF", alpha = .7, size = 2, position = position_jitter(width = 0.1))
+p <- p + scale_x_discrete(labels = c("WT", "Rag1 -/-"))
+# p <- p + facet_wrap(Taxa_ID ~ ., ncol = 1, scales = "free")
+p <- p + facet_grid_sc(rows = vars(Taxa_ID),  scales = list(y = scales_y))
+p <- p + theme(strip.background = element_rect(fill = "white"))
+p <- p + theme(
+  panel.background = element_rect(fill = "transparent",colour = NA),
+  plot.background = element_rect(fill = "transparent",colour = NA),
+  legend.background = element_rect(fill = "transparent",colour = NA),
+  panel.grid.major = element_blank(), 
+  panel.grid.minor = element_blank(),
+  legend.key = element_rect(fill = "transparent",colour = NA))
+p <- p + stat_pvalue_manual(stat_df, label = "p.signif")
+p <- p + theme(text = element_text(family = "sans"))
+p <- p + xlab("Genotype")
+p <- p + ylab("Observed - Expected Cage Mean")
+p
+
+file_name <- "Figure_3C"
+
+pdf(paste0(Save_fp, file_name, ".pdf"), width = 2.5, height = 8)
+p + theme(legend.position = "none")
+invisible(dev.off())
+
+```
+
+
